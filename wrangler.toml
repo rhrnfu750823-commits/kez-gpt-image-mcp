@@ -1,0 +1,52 @@
+name = "kez-gpt-image-mcp"
+main = "src/index.ts"
+compatibility_date = "2026-05-13"
+
+# account_id 는 의도적으로 비워 둠 — 배포하는 사람마다 자기 Cloudflare 계정 값이 들어간다.
+# `npx wrangler deploy` 가 자동으로 계정을 묻거나, 환경변수 CLOUDFLARE_ACCOUNT_ID 로 줄 수 있다.
+# (여러 계정이면: npx wrangler whoami 로 확인 후 여기에 account_id = "..." 한 줄 추가)
+
+# OpenAI가 일부 Cloudflare 엣지(예: 홍콩)發 요청을 "Country not supported" 403으로 차단한다.
+# Smart Placement로 실행 위치를 백엔드(OpenAI, 미국) 근처로 옮겨 우회. 적용까지 최대 15분 소요.
+[placement]
+mode = "smart"
+
+# 고정 자산 보호(선택) — 여기 적은 slug는 register/delete가 거절된다(실수로 덮어쓰기 방지).
+# 쉼표 구분, `edu-*`처럼 *로 끝나면 접두 매칭. 필요 없으면 빈 문자열로 둔다.
+[vars]
+PROTECTED_SLUGS = ""
+
+# 참조 이미지 + 출력물 저장소(R2). 버킷은 비공개 유지 — 파일 서빙은 Worker의
+# GET /files/{key}?sig=... (HMAC 서명)로만 한다. r2.dev 공개 활성화 금지.
+# 최초 1회 생성 필요: npx wrangler r2 bucket create kez-gpt-image-assets
+[[r2_buckets]]
+binding = "ASSETS"
+bucket_name = "kez-gpt-image-assets"
+
+# Cloudflare Images — 앵커를 OpenAI 입력용 512px로 다운스케일 (R2에 캐시, 월 5천 unique 무료).
+# 계정에서 Images 미활성이면 런타임 폴백으로 원본 전송 — 기능 저하 없음(활성화는 선택).
+[images]
+binding = "IMAGES"
+
+# OpenAI 호출 중계 DO — 미국 동부 고정 실행으로 엣지發 OpenAI 403 회피.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["OpenAIRelay"]
+
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "OpenAIRelay"
+
+# 비동기 생성 job 큐 DO — wait:false / generate_batch 주문을 SQLite에 적재하고 알람으로
+# 분당 5장 페이싱·백오프 재시도. 세션이 끊겨도 job은 완료되고 check_jobs로 회수.
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["JobQueue"]
+
+[[durable_objects.bindings]]
+name = "JOBS"
+class_name = "JobQueue"
+
+# 시크릿은 wrangler CLI로 별도 등록 — 이 파일에 평문 절대 금지:
+#   npx wrangler secret put OPENAI_API_KEY   ← 본인 OpenAI API 키 (https://platform.openai.com/api-keys)
+#   npx wrangler secret put MCP_AUTH_TOKEN   ← openssl rand -hex 32 결과 (커넥터 인증용, 본인이 새로 생성)

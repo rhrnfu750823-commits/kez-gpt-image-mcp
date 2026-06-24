@@ -1,0 +1,26 @@
+{
+  "name": "kez-gpt-image-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "bash setup.sh",
+    "build:widget": "node scripts/build-widget.mjs",
+    "deploy": "npm run build:widget && wrangler deploy",
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit",
+    "tail": "wrangler tail",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251201.0",
+    "@modelcontextprotocol/ext-apps": "^1.7.4",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.0.0"
+  }
+}
