@@ -75,23 +75,78 @@ function downloadHref(url, filename) {
   return url + (url.includes('?') ? '&' : '?') + 'download=' + encodeURIComponent(filename);
 }
 
-async function doDownload(url, filename) {
-  const dlUrl = downloadHref(url, filename);
+// 호스트 매개 다운로드 공통 경로 — downloadFile → openLink → window.open 순 graceful fallback.
+async function hostDownload(finalUrl, filename, mimeType) {
   if (appRef) {
     try {
       const r = await appRef.downloadFile({
-        contents: [{ type: 'resource_link', uri: dlUrl, name: filename, mimeType: 'image/webp' }],
+        contents: [{ type: 'resource_link', uri: finalUrl, name: filename, mimeType }],
       });
       if (!r || !r.isError) return;
     } catch {}
     try {
-      const r = await appRef.openLink({ url: dlUrl }); // 폴백: 호스트가 새 탭/외부 브라우저로 연다
+      const r = await appRef.openLink({ url: finalUrl }); // 폴백: 호스트가 새 탭/외부 브라우저로 연다
       if (!r || !r.isError) return;
     } catch {}
   }
   try {
-    window.open(dlUrl, '_blank'); // 최후 (allow-popups 있을 때만)
+    window.open(finalUrl, '_blank'); // 최후 (allow-popups 있을 때만)
   } catch {}
+}
+
+async function doDownload(url, filename) {
+  await hostDownload(downloadHref(url, filename), filename, 'image/webp');
+}
+
+// ---------- 일괄(ZIP) 다운로드 — 워커 /zip 이 여러 장을 한 파일로 묶어 attachment로 내려준다 ----------
+
+// 자기 서명 URL(/files/{key}?sig=) → {origin, key(디코드본), sig}. 워커 출력물만 대상(외부 URL 제외).
+function parseSignedUrl(u) {
+  try {
+    const url = new URL(u);
+    if (!url.pathname.startsWith('/files/')) return null;
+    const key = url.pathname
+      .slice('/files/'.length)
+      .split('/')
+      .map(decodeURIComponent)
+      .join('/');
+    const sig = url.searchParams.get('sig');
+    return sig ? { origin: url.origin, key, sig } : null;
+  } catch {
+    return null;
+  }
+}
+
+// 위젯이 이미 들고 있는 파일별 (key, sig)를 /zip 쿼리로 되보낸다 — 서버가 파일별 재검증 후 R2에서 읽어 묶는다.
+function buildZipUrl(urls, zipName) {
+  const parsed = urls.map(parseSignedUrl).filter(Boolean);
+  if (parsed.length < 2) return null;
+  const qs = new URLSearchParams();
+  qs.set('n', zipName);
+  for (const p of parsed) {
+    qs.append('f', p.key);
+    qs.append('s', p.sig);
+  }
+  return parsed[0].origin + '/zip?' + qs.toString();
+}
+
+async function doZipDownload(urls, btn) {
+  const name = 'kez_images.zip';
+  const zipUrl = buildZipUrl(urls, name);
+  if (!zipUrl) return;
+  const label = btn && btn.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '묶는 중…';
+  }
+  try {
+    await hostDownload(zipUrl, name, 'application/zip');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
 }
 
 // 복사 — async clipboard → execCommand 폴백, 버튼에 1.2초 피드백.
@@ -237,6 +292,18 @@ function card(item) {
   return node;
 }
 
+// 일괄 저장 버튼 — 워커 출력물(/files/)이 2장 이상일 때만. 1장이면 개별 ↓ 버튼으로 충분.
+function renderZipBar(list) {
+  const bar = document.getElementById('bar');
+  if (!bar) return;
+  bar.replaceChildren();
+  const dlUrls = list.map((it) => it.url).filter((u) => typeof u === 'string' && u.includes('/files/'));
+  if (dlUrls.length < 2) return;
+  const btn = el('button', 'zip-btn', `↓ 전체 저장 (${dlUrls.length}장 ZIP)`);
+  btn.addEventListener('click', () => doZipDownload(dlUrls, btn));
+  bar.appendChild(btn);
+}
+
 function renderItems(items) {
   const list = (Array.isArray(items) ? items : []).filter(
     (it) => it && typeof it.url === 'string' && it.url.startsWith('https://'),
@@ -244,6 +311,7 @@ function renderItems(items) {
   if (!list.length) return false;
   gotData = true;
   status.style.display = 'none';
+  renderZipBar(list);
   grid.classList.toggle('single', list.length === 1);
   grid.replaceChildren(...list.map((it) => (it.metadata ? card(it) : outputImage(it.url, '', it.metadata))));
   return true;

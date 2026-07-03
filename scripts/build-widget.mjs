@@ -61,6 +61,13 @@ const galleryStyle = `  :root { color-scheme: light dark; }
     border: 1px dashed var(--color-border-primary, #999); border-radius: var(--border-radius-md, 8px);
     font-size: 13px; padding: 8px; }
   #status { padding: 16px 12px; font-size: 13px; color: var(--color-text-secondary, #888); }
+  /* 일괄 저장 툴바 — 여러 장일 때만 채워진다 (비면 숨김) */
+  #bar { padding: 8px 8px 0; }
+  #bar:empty { display: none; }
+  .zip-btn { font-size: 12.5px; font-weight: 600; padding: 7px 12px; cursor: pointer; border-radius: 8px;
+    border: 1px solid var(--color-border-primary, #3333); background: var(--color-background-secondary, #8881);
+    color: var(--color-text-primary, inherit); }
+  .zip-btn:disabled { opacity: .5; cursor: default; }
   /* 상세 카드 (사이드카 메타 있는 항목) */
   .card { border: 1px solid var(--color-border-primary, #3333); border-radius: var(--border-radius-md, 10px);
     padding: 10px; display: flex; flex-direction: column; gap: 10px; }
@@ -105,6 +112,7 @@ const galleryStyle = `  :root { color-scheme: light dark; }
     background: none; border: 0; cursor: pointer; }`;
 
 const galleryBody = `<div id="status">갤러리 초기화 중…</div>
+<div id="bar"></div>
 <div id="grid"></div>`;
 
 // ---------- 업로더 위젯 ----------

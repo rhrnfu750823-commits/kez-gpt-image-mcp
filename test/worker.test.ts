@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import worker, {
   callTool,
   fileSig,
+  buildStoreZip,
   estimateCost,
   assemblePrompt,
   sanitize,
@@ -892,6 +893,9 @@ describe('generation metadata sidecar', () => {
     expect(html).toContain('.copy-btn'); // 프롬프트 복사 버튼 CSS
     expect(html).toContain('프롬프트 복사'); // 번들 JS 리터럴 (단일 복사 버튼)
     expect(html).toContain('download='); // 다운로드 앵커: 서버 강제첨부 URL(?download=) 조립
+    expect(html).toContain('전체 저장'); // 일괄 ZIP 다운로드 버튼 (번들 JS 리터럴)
+    expect(html).toContain('.zip-btn'); // 일괄 저장 버튼 CSS
+    expect(html).toContain('/zip?'); // 위젯이 조립하는 일괄 다운로드 엔드포인트
   });
 });
 
@@ -1040,6 +1044,116 @@ describe('show_creations (MCP Apps 위젯 경로)', () => {
       urls: Array.from({ length: 11 }, (_, i) => `outputs/${i}.png`),
     });
     expect(result.isError).toBe(true);
+  });
+});
+
+// ---------- 일괄 ZIP 다운로드 (GET /zip) ----------
+
+describe('buildStoreZip (STORE zip 조립기)', () => {
+  it('PK 헤더 + EOCD 엔트리수 정확, 무압축(저장=원본크기)', () => {
+    const enc = new TextEncoder();
+    const files = [
+      { name: 'a.webp', data: enc.encode('AAAA') },
+      { name: 'b.webp', data: enc.encode('BBBBBB') },
+    ];
+    const zip = buildStoreZip(files);
+    expect(zip[0]).toBe(0x50); // 'P'
+    expect(zip[1]).toBe(0x4b); // 'K'
+    // EOCD(끝 22바이트) 내 "total entries"는 offset 8의 u16 → 파일 끝에서 -14/-13
+    const entries = zip[zip.length - 14] | (zip[zip.length - 13] << 8);
+    expect(entries).toBe(2);
+  });
+});
+
+describe('일괄 ZIP 다운로드 (GET /zip)', () => {
+  async function putOutput(key: string, body = 'fake-webp-bytes') {
+    await r2.put(key, Buffer.from(body), { httpMetadata: { contentType: 'image/webp' } });
+  }
+  async function zipRequest(pairs: Array<[string, string]>, name?: string) {
+    const qs = new URLSearchParams();
+    if (name) qs.set('n', name);
+    for (const [key, sig] of pairs) {
+      qs.append('f', key);
+      qs.append('s', sig);
+    }
+    return worker.fetch(new Request(`${ORIGIN}/zip?${qs.toString()}`), env);
+  }
+  const sigOf = (key: string) => fileSig(env, key);
+
+  it('유효 서명 다중 파일 → 200 application/zip + attachment, 전 파일명 포함', async () => {
+    await putOutput('outputs/2026-07/a.webp', 'AAAA');
+    await putOutput('outputs/2026-07/b.webp', 'BBBBBB');
+    const res = await zipRequest(
+      [
+        ['outputs/2026-07/a.webp', await sigOf('outputs/2026-07/a.webp')],
+        ['outputs/2026-07/b.webp', await sigOf('outputs/2026-07/b.webp')],
+      ],
+      'insta.zip',
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('application/zip');
+    expect(res.headers.get('Content-Disposition')).toContain('attachment');
+    expect(res.headers.get('Content-Disposition')).toContain('insta.zip');
+    const text = new TextDecoder('latin1').decode(new Uint8Array(await res.arrayBuffer()));
+    expect(text).toContain('a.webp');
+    expect(text).toContain('b.webp');
+  });
+
+  it('n 미지정 → 기본 파일명 kez_images.zip', async () => {
+    await putOutput('outputs/2026-07/a.webp');
+    await putOutput('outputs/2026-07/b.webp');
+    const res = await zipRequest([
+      ['outputs/2026-07/a.webp', await sigOf('outputs/2026-07/a.webp')],
+      ['outputs/2026-07/b.webp', await sigOf('outputs/2026-07/b.webp')],
+    ]);
+    expect(res.headers.get('Content-Disposition')).toContain('kez_images.zip');
+  });
+
+  it('서명 하나라도 틀리면 통째로 403 (부분 유출 차단)', async () => {
+    await putOutput('outputs/2026-07/a.webp');
+    await putOutput('outputs/2026-07/b.webp');
+    const res = await zipRequest([
+      ['outputs/2026-07/a.webp', await sigOf('outputs/2026-07/a.webp')],
+      ['outputs/2026-07/b.webp', 'deadbeef'],
+    ]);
+    expect(res.status).toBe(403);
+  });
+
+  it('f/s 개수 불일치 → 400', async () => {
+    const qs = new URLSearchParams();
+    qs.append('f', 'outputs/x.webp');
+    qs.append('f', 'outputs/y.webp');
+    qs.append('s', 'onlyone');
+    const res = await worker.fetch(new Request(`${ORIGIN}/zip?${qs.toString()}`), env);
+    expect(res.status).toBe(400);
+  });
+
+  it('파일 수 상한(20) 초과 → 400', async () => {
+    const pairs: Array<[string, string]> = [];
+    for (let i = 0; i < 21; i++) {
+      const k = `outputs/2026-07/n${i}.webp`;
+      pairs.push([k, await sigOf(k)]);
+    }
+    const res = await zipRequest(pairs);
+    expect(res.status).toBe(400);
+  });
+
+  it('서명 유효하나 R2에 전부 없음 → 404', async () => {
+    const res = await zipRequest([['outputs/2026-07/ghost.webp', await sigOf('outputs/2026-07/ghost.webp')]]);
+    expect(res.status).toBe(404);
+  });
+
+  it('basename 충돌(다른 폴더 같은 이름) → zip 내부 접미번호로 분리', async () => {
+    await putOutput('outputs/2026-06/shot.webp', 'X');
+    await putOutput('outputs/2026-07/shot.webp', 'Y');
+    const res = await zipRequest([
+      ['outputs/2026-06/shot.webp', await sigOf('outputs/2026-06/shot.webp')],
+      ['outputs/2026-07/shot.webp', await sigOf('outputs/2026-07/shot.webp')],
+    ]);
+    expect(res.status).toBe(200);
+    const text = new TextDecoder('latin1').decode(new Uint8Array(await res.arrayBuffer()));
+    expect(text).toContain('shot.webp');
+    expect(text).toContain('shot_1.webp');
   });
 });
 

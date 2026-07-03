@@ -1855,6 +1855,143 @@ async function handleFiles(req: Request, env: Env, url: URL): Promise<Response |
   return new Response(obj.body, { headers });
 }
 
+// ---------- 서명 다중파일 ZIP 서빙 (GET /zip?f=<key>&s=<sig>&…&n=<zipname>) ----------
+//
+// 인스타툰처럼 한 번에 여러 장 뽑았을 때의 "일괄 다운로드". 위젯이 이미 들고 있는 각 파일의
+// 서명(fileSig)을 그대로 되보내면, 서버가 파일별로 재검증(safeEqual)한 뒤 R2에서 읽어 STORE(무압축)
+// zip으로 묶어 attachment로 내려준다 — 클라이언트에 새 secret이 필요 없다(파일당 기존 서명 재사용).
+// webp는 이미 압축돼 있어 압축해도 크기 이득이 거의 없고 CPU만 먹으므로 STORE로 고정.
+const ZIP_MAX_FILES = 20; // 인스타툰(9장) 여유 상한
+const ZIP_MAX_BYTES = 80 * 1024 * 1024; // 워커 메모리(128MB) 여유 — 초과 시 413
+
+async function handleZip(req: Request, env: Env, url: URL): Promise<Response | null> {
+  if (req.method !== 'GET' || url.pathname !== '/zip') return null;
+  const keys = url.searchParams.getAll('f');
+  const sigs = url.searchParams.getAll('s');
+  if (keys.length === 0 || keys.length !== sigs.length) {
+    return new Response('Bad Request', { status: 400, headers: CORS_HEADERS });
+  }
+  if (keys.length > ZIP_MAX_FILES) {
+    return new Response(`Too many files (max ${ZIP_MAX_FILES})`, { status: 400, headers: CORS_HEADERS });
+  }
+  // 파일별 서명 재검증 — 하나라도 틀리면 통째로 403 (부분 유출 방지)
+  for (let i = 0; i < keys.length; i++) {
+    const expected = await fileSig(env, keys[i]);
+    if (!sigs[i] || !safeEqual(sigs[i], expected)) {
+      return new Response('Forbidden', { status: 403, headers: CORS_HEADERS });
+    }
+  }
+  // R2에서 바이트 수집 (없는 키는 건너뜀 — 나머지라도 받게)
+  const files: { name: string; data: Uint8Array }[] = [];
+  const usedNames = new Set<string>();
+  let total = 0;
+  for (const key of keys) {
+    const obj = await env.ASSETS.get(key);
+    if (!obj) continue;
+    const data = new Uint8Array(await obj.arrayBuffer());
+    total += data.length;
+    if (total > ZIP_MAX_BYTES) {
+      return new Response('Payload Too Large', { status: 413, headers: CORS_HEADERS });
+    }
+    files.push({ name: uniqueZipName(key, usedNames), data });
+  }
+  if (files.length === 0) return new Response('Not Found', { status: 404, headers: CORS_HEADERS });
+
+  const zip = buildStoreZip(files);
+  const rawName = url.searchParams.get('n') || 'kez_images';
+  const zipName = (rawName.replace(/[^\w.\-]/g, '_') || 'kez_images').replace(/(\.zip)?$/i, '.zip');
+  return new Response(zip, {
+    headers: {
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${zipName}"`,
+      'Content-Length': String(zip.length),
+      'Cache-Control': 'no-store',
+      'Cross-Origin-Resource-Policy': 'cross-origin',
+      'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length, Content-Type',
+      ...CORS_HEADERS,
+    },
+  });
+}
+
+// zip 내부 파일명 — 키의 basename만(경로 구분자 제거로 zip-slip 무해화), 충돌 시 접미 번호.
+function uniqueZipName(key: string, used: Set<string>): string {
+  const base = (key.split('/').pop() || 'image').replace(/[^\w.\-]/g, '_') || 'image';
+  let name = base;
+  let i = 1;
+  while (used.has(name)) {
+    const dot = base.lastIndexOf('.');
+    name = dot > 0 ? `${base.slice(0, dot)}_${i}${base.slice(dot)}` : `${base}_${i}`;
+    i++;
+  }
+  used.add(name);
+  return name;
+}
+
+// ---------- 최소 ZIP(STORE) 조립기 — 무압축, 의존성 0 ----------
+// webp/png은 이미 엔트로피가 높아 deflate 이득이 미미 → 압축 없이 그대로 담고 CRC만 계산한다.
+const CRC32_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(buf: Uint8Array): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < buf.length; i++) c = CRC32_TABLE[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+export function buildStoreZip(files: { name: string; data: Uint8Array }[]): Uint8Array {
+  const enc = new TextEncoder();
+  const local: Uint8Array[] = []; // 로컬 헤더 + 이름 + 데이터 (본문)
+  const central: Uint8Array[] = []; // 중앙 디렉토리 레코드
+  const u16 = (n: number) => [n & 0xff, (n >>> 8) & 0xff];
+  const u32 = (n: number) => [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff];
+  let offset = 0;
+
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const crc = crc32(f.data);
+    const size = f.data.length;
+    // Local file header (0x04034b50): store 방식(method=0), 시간/날짜 0
+    const header = new Uint8Array([
+      ...u32(0x04034b50), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+      ...u32(crc), ...u32(size), ...u32(size), ...u16(name.length), ...u16(0),
+    ]);
+    local.push(header, name, f.data);
+    // Central directory header (0x02014b50)
+    central.push(
+      new Uint8Array([
+        ...u32(0x02014b50), ...u16(20), ...u16(20), ...u16(0), ...u16(0), ...u16(0), ...u16(0),
+        ...u32(crc), ...u32(size), ...u32(size), ...u16(name.length), ...u16(0), ...u16(0),
+        ...u16(0), ...u16(0), ...u32(0), ...u32(offset),
+      ]),
+      name,
+    );
+    offset += header.length + name.length + size;
+  }
+
+  const cdStart = offset;
+  let cdSize = 0;
+  for (const c of central) cdSize += c.length;
+  // End of central directory (0x06054b50)
+  const eocd = new Uint8Array([
+    ...u32(0x06054b50), ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length),
+    ...u32(cdSize), ...u32(cdStart), ...u16(0),
+  ]);
+
+  const out = new Uint8Array(cdStart + cdSize + eocd.length);
+  let p = 0;
+  for (const part of local) { out.set(part, p); p += part.length; }
+  for (const c of central) { out.set(c, p); p += c.length; }
+  out.set(eocd, p);
+  return out;
+}
+
 // ---------- 이미지 업로드 (HTTP 엔드포인트 — MCP 도구 아님) ----------
 //
 // 불변 원칙: 이미지 바이트는 클라이언트→워커 구간만 흐르고 LLM은 0회 통과한다. 그래서 업로드 입구는
@@ -1973,6 +2110,9 @@ export default {
 
     const fileResp = await handleFiles(req, env, url);
     if (fileResp) return fileResp;
+
+    const zipResp = await handleZip(req, env, url);
+    if (zipResp) return zipResp;
 
     const tokenResp = await handleUploadToken(req, env, url);
     if (tokenResp) return tokenResp;
