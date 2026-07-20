@@ -1,5 +1,8 @@
 # Kez gpt-image — Claude용 이미지 생성 MCP 서버
-![Uploading 8445B8CA-8001-442D-93D4-4BD9E85A9852.png…]()
+
+<p align="center">
+  <img src="assets/hero.png" alt="kez gpt-image — Claude 채팅 안에서 AI 이미지 생성" width="720" />
+</p>
 
 OpenAI **gpt-image**를 Claude(claude.ai · 데스크탑 · 폰)에 붙여, **채팅 안에서** 이미지를 생성하고 화풍·캐릭터를 일관되게 관리하는 MCP 서버입니다. Cloudflare Worker로 **1인 1배포**, Cloudflare는 무료 한도 안에서 사실상 0원(과금은 본인 OpenAI 사용량만).
 
