@@ -6,11 +6,25 @@
   "scripts": {
     "setup": "bash setup.sh",
     "build:widget": "node scripts/build-widget.mjs",
+    "build": "npm run build:widget",
     "deploy": "npm run build:widget && wrangler deploy",
     "dev": "wrangler dev",
     "typecheck": "tsc --noEmit",
     "tail": "wrangler tail",
     "test": "vitest run"
+  },
+  "cloudflare": {
+    "bindings": {
+      "OPENAI_API_KEY": {
+        "description": "OpenAI API 키 — https://platform.openai.com/api-keys 에서 발급 (이미지 사용량만큼 본인 OpenAI 계정에 과금)"
+      },
+      "MCP_AUTH_TOKEN": {
+        "description": "내부용 인증 토큰 — 아무 긴 무작위 문자열. 예: 터미널에서 `openssl rand -hex 32` 실행 후 그 결과를 붙여넣기"
+      },
+      "OAUTH_PASSCODE": {
+        "description": "연결 비밀번호(본인이 정함) — claude.ai 커넥터를 연결할 때 입력할 값입니다"
+      }
+    }
   },
   "dependencies": {
     "zod": "^4.0.0"

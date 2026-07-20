@@ -1,0 +1,17 @@
+# 시크릿 예시 — 두 가지 용도로 쓰입니다.
+#  1) 로컬 개발: 이 파일을 `.dev.vars` 로 복사해 값을 채우면 `npm run dev` 가 읽습니다. (.dev.vars 는 git 에 안 올라감)
+#  2) "Deploy to Cloudflare" 버튼: 배포 시 아래 키들을 폼으로 입력받습니다(값은 여기 예시가 아니라 폼에서 본인이 입력).
+# 실제 비밀값은 절대 이 파일이나 git 에 넣지 마세요.
+
+# OpenAI API 키 — https://platform.openai.com/api-keys
+OPENAI_API_KEY=sk-여기에-본인-키
+
+# 내부용 인증 토큰 — 아무 긴 무작위 문자열. 예: `openssl rand -hex 32` 결과
+MCP_AUTH_TOKEN=긴-무작위-문자열로-바꾸세요
+
+# 연결 비밀번호 — 본인이 정함. claude.ai 커넥터 연결 시 입력할 값
+OAUTH_PASSCODE=연결-비밀번호를-정하세요
+
+# (선택·권장) OAuth code 서명 키 — 또 다른 무작위 문자열. 비우면 MCP_AUTH_TOKEN 을 재사용합니다.
+# 최대 보안을 원하면 `openssl rand -hex 32` 로 별도 값을 넣으세요.
+# OAUTH_SIGNING_KEY=또-다른-긴-무작위-문자열

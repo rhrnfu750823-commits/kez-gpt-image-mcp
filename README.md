@@ -31,7 +31,23 @@ OpenAI **gpt-image**를 Claude(claude.ai · 데스크탑 · 폰)에 붙여, **�
 
 ---
 
-## 설치 — 방법 1: Claude Code 한 프롬프트 (제일 쉬움)
+## 설치 — 방법 0: Deploy to Cloudflare 버튼 (원클릭, 제일 쉬움)
+
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/HarinJin/kez-gpt-image-mcp)
+
+버튼을 누르면 Cloudflare가 **터미널 없이** 다음을 알아서 처리합니다:
+1. 이 저장소를 **본인 GitHub로 복제**
+2. `wrangler.toml`을 읽어 **R2 버킷·Durable Objects 자동 생성**
+3. **OpenAI 키·인증 토큰·연결 비밀번호**를 입력 폼으로 물어봄 (각 칸에 안내 설명 표시)
+4. 워커 **배포** → 배포된 URL 발급
+
+필요한 것: **Cloudflare 계정(무료)** · **OpenAI API 키**. 배포가 끝나면 그 워커 URL을 아래 [claude.ai 커넥터 등록](#claudeai-커넥터-등록)에 넣고, 연결 시 뜨는 비밀번호 페이지에 위에서 정한 **연결 비밀번호**를 입력하면 끝입니다.
+
+> 입력 항목: `OPENAI_API_KEY`(OpenAI 키), `MCP_AUTH_TOKEN`(아무 긴 무작위 문자열 — `openssl rand -hex 32` 결과 권장), `OAUTH_PASSCODE`(본인이 정하는 연결 비밀번호). `OAUTH_SIGNING_KEY`는 선택이며 비우면 자동으로 `MCP_AUTH_TOKEN`을 재사용합니다.
+
+터미널로 직접 하고 싶으면 아래 방법 1~3 중 하나를 쓰세요.
+
+## 설치 — 방법 1: Claude Code 한 프롬프트 (코드가 대신)
 
 이 저장소를 받은 뒤, **클로드 코드에 아래를 그대로 붙여넣으세요.** 나머지는 클로드가 합니다.
 
