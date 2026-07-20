@@ -96,12 +96,12 @@ claude.ai → **Settings → Connectors → Add custom connector**:
 "이 그림 화풍으로 등록할래"처럼 말하면 채팅 안에 **끌어놓기 위젯**이 뜹니다. 이미지를 드롭 → **화풍/캐릭터** 선택 → 이름·고정 프롬프트 입력 → 등록. 이미지 바이트는 워커로 직접 올라가 **대화(LLM)를 통과하지 않아 토큰을 쓰지 않습니다.** 등록한 화풍/캐릭터로 여러 컷을 뽑아도 그림체가 일관됩니다.
 
 <p align="center">
-  <img src="assets/register-drag.png" width="520" alt="드래그로 화풍·캐릭터 등록 — 이미지를 화풍/캐릭터 영역에 끌어놓기" />
+  <img src="assets/register-drag.png" width="600" alt="드래그로 화풍·캐릭터 등록 — 이미지를 화풍/캐릭터 영역에 끌어놓기" />
 </p>
 
 실제 위젯 화면 (채팅 안에 인라인으로 뜸):
 
-<img src="assets/uploader-widget.png" width="400" alt="레퍼런스 업로더 위젯 — 드롭존, 화풍/캐릭터 선택, 이름·고정 프롬프트 입력" />
+<img src="assets/uploader-widget.png" width="600" alt="레퍼런스 업로더 위젯 — 드롭존, 화풍/캐릭터 선택, 이름·고정 프롬프트 입력" />
 
 ---
 
