@@ -44,6 +44,8 @@ OpenAI **gpt-image**를 Claude(claude.ai · 데스크탑 · 폰)에 붙여, **�
 필요한 것: **Cloudflare 계정(무료)** · **OpenAI API 키**. 배포가 끝나면 그 워커 URL을 아래 [claude.ai 커넥터 등록](#claudeai-커넥터-등록)에 넣고, 연결 시 뜨는 비밀번호 페이지에 위에서 정한 **연결 비밀번호**를 입력하면 끝입니다.
 
 > 입력 항목: `OPENAI_API_KEY`(OpenAI 키), `MCP_AUTH_TOKEN`(아무 긴 무작위 문자열 — `openssl rand -hex 32` 결과 권장), `OAUTH_PASSCODE`(본인이 정하는 연결 비밀번호). `OAUTH_SIGNING_KEY`는 선택이며 비우면 자동으로 `MCP_AUTH_TOKEN`을 재사용합니다.
+>
+> **비워둬도 되는 칸:** `PROTECTED_SLUGS`(고급·잠금 목록, 보통 빈 값) · `Location hint`(R2 지역 자동선택). **처음 R2를 쓰는 계정**이면 폼에서 **R2 활성화**를 한 번 요구할 수 있는데, `Upgrade`/활성화를 누르면 됩니다 — 무료 한도(10GB 등) 안에선 과금 0입니다.
 
 터미널로 직접 하고 싶으면 아래 방법 1~3 중 하나를 쓰세요.
 

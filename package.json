@@ -23,6 +23,9 @@
       },
       "OAUTH_PASSCODE": {
         "description": "연결 비밀번호(본인이 정함) — claude.ai 커넥터를 연결할 때 입력할 값입니다"
+      },
+      "PROTECTED_SLUGS": {
+        "description": "(선택 · 보통 비워두세요) 덮어쓰기·삭제를 막을 화풍/캐릭터 slug 목록(쉼표 구분). 교육용 고정 레퍼런스가 있을 때만 씁니다. 빈 값이 기본입니다."
       }
     }
   },
