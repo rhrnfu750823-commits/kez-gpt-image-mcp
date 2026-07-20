@@ -2,6 +2,13 @@ name = "kez-gpt-image-mcp"
 main = "src/index.ts"
 compatibility_date = "2026-05-13"
 
+# workers.dev URL을 항상 켠다 → 배포 후 유저가 바로 MCP 주소를 얻는다:
+#   https://<name>.<본인-서브도메인>.workers.dev   (커넥터에 넣을 주소)
+# (미지정이어도 기본 on 이지만, 명시해서 배포 로그 경고 제거 + 동작 고정)
+workers_dev = true
+# 버전별 프리뷰 URL은 불필요 — 공격면 축소.
+preview_urls = false
+
 # account_id 는 의도적으로 비워 둠 — 배포하는 사람마다 자기 Cloudflare 계정 값이 들어간다.
 # `npx wrangler deploy` 가 자동으로 계정을 묻거나, 환경변수 CLOUDFLARE_ACCOUNT_ID 로 줄 수 있다.
 # (여러 계정이면: npx wrangler whoami 로 확인 후 여기에 account_id = "..." 한 줄 추가)

@@ -43,6 +43,8 @@ OpenAI **gpt-image**를 Claude(claude.ai · 데스크탑 · 폰)에 붙여, **�
 
 필요한 것: **Cloudflare 계정(무료)** · **OpenAI API 키**. 배포가 끝나면 그 워커 URL을 아래 [claude.ai 커넥터 등록](#claudeai-커넥터-등록)에 넣고, 연결 시 뜨는 비밀번호 페이지에 위에서 정한 **연결 비밀번호**를 입력하면 끝입니다.
 
+> **배포 후 MCP 주소(워커 URL) 찾기:** 형식은 항상 `https://<프로젝트명>.<본인-계정-서브도메인>.workers.dev` 입니다. 대시보드에서는 **Workers & Pages → 방금 만든 워커 클릭 → Overview 상단**(또는 그 워커의 **Domains 탭**)에 나옵니다. ⚠️ 좌측 사이드바의 **Domains(Registrations)** 가 아닙니다 — 거긴 *구매한* 커스텀 도메인용이라 비어 있는 게 정상. 배포(빌드) 로그 맨 아래 `Deployed ... https://...workers.dev` 줄에도 찍힙니다.
+
 > 입력 항목: `OPENAI_API_KEY`(OpenAI 키), `MCP_AUTH_TOKEN`(아무 긴 무작위 문자열 — `openssl rand -hex 32` 결과 권장), `OAUTH_PASSCODE`(본인이 정하는 연결 비밀번호). `OAUTH_SIGNING_KEY`는 선택이며 비우면 자동으로 `MCP_AUTH_TOKEN`을 재사용합니다.
 >
 > **비워둬도 되는 칸:** `PROTECTED_SLUGS`(고급·잠금 목록, 보통 빈 값) · `Location hint`(R2 지역 자동선택). **처음 R2를 쓰는 계정**이면 폼에서 **R2 활성화**를 한 번 요구합니다 — `Upgrade`/활성화를 누르고 **결제수단(카드)을 1회 등록**하면 됩니다. R2 free tier(10GB·egress 0 등)는 **영구 무료**라 이 앱 사용량에선 **청구가 사실상 0**이지만, Cloudflare가 R2 활성화에 카드 등록을 요구합니다(**터미널 방식도 동일** — R2는 어느 방식이든 계정에 1회 활성화 필요).
