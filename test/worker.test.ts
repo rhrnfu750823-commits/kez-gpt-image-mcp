@@ -248,9 +248,10 @@ describe('tools/list', () => {
     expect(byName.list_assets.annotations.readOnlyHint).toBe(true);
     expect(byName.get_asset.annotations.readOnlyHint).toBe(true);
     expect(byName.show_creations.annotations.readOnlyHint).toBe(true);
-    // 가드 A: 스키마 단계에서 style 필수 노출 — 모델이 빈 슬롯 호출을 애초에 못 보냄
+    // style은 선택(생략 시 순수 생성) — required에 없어야 하고, prompt만 필수.
     const genSchema = byName.generate_image.inputSchema as { required?: string[] };
-    expect(genSchema.required).toContain('style');
+    expect(genSchema.required).toContain('prompt');
+    expect(genSchema.required).not.toContain('style');
     expect(genSchema.required).not.toContain('character');
     expect(byName.delete_asset.annotations.destructiveHint).toBe(true);
     expect(byName.register_character.annotations.destructiveHint).toBe(true);
@@ -426,12 +427,27 @@ describe('delete_asset', () => {
 // ---------- generate_image ----------
 
 describe('generate_image', () => {
-  it('가드 A+B: style 미지정 → OpenAI 호출 전 거절 + 자기수정 안내', async () => {
+  it('style 미지정 → style 없이 순수 생성 성공 (/generations, 앵커 없음)', async () => {
     const result = await callTool(env, ORIGIN, 'generate_image', { prompt: '노을 지는 한강' });
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("'style' slug가 비어 있다");
-    expect(result.content[0].text).toContain('list_assets');
-    expect(openaiCalls.length).toBe(0); // 비용 발생 전 차단
+    expect(result.isError).toBeUndefined();
+    expect(openaiCalls.length).toBe(1);
+    expect(openaiCalls[0].url).toContain('/v1/images/generations'); // 앵커 0 → edits 아님
+  });
+
+  it('텍스트만 화풍(이미지 0장) 등록 → 그 style로 생성 성공 (fixed_prompt가 프롬프트에 결합, /generations)', async () => {
+    const reg = await callTool(env, ORIGIN, 'register_style', {
+      slug: 'text-style',
+      fixed_prompt: '플랫 셀 셰이딩 웹툰, 파스텔 팔레트',
+    });
+    expect(reg.isError).toBeUndefined();
+
+    const gen = await callTool(env, ORIGIN, 'generate_image', { prompt: '고양이', style: 'text-style' });
+    expect(gen.isError).toBeUndefined();
+    expect(openaiCalls.length).toBe(1);
+    expect(openaiCalls[0].url).toContain('/v1/images/generations'); // 앵커 0장 → edits 아님
+    const body = JSON.parse(String(openaiCalls[0].init.body));
+    expect(body.prompt).toContain('플랫 셀 셰이딩'); // 고정 화풍 결합
+    expect(body.prompt).toContain('고양이'); // 장면 프롬프트
   });
 
   it('가드 B: 빈 문자열/공백 style → 거절, OpenAI 호출 0회', async () => {

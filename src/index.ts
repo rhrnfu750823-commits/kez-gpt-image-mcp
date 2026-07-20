@@ -344,10 +344,10 @@ const registerInput = z.object({
   slug: slugField,
   image_urls: z
     .array(z.string())
-    .min(1)
     .max(5)
+    .default([])
     .describe(
-      '참조 이미지 1~5장. R2 key(예: "outputs/2026-06/….webp"), 이 서버의 서명 URL, 외부 http(s) URL, data URI, base64 모두 허용 — 생성 결과를 그대로 레퍼런스로 등록 가능',
+      '참조 이미지 0~5장. 비우면 텍스트(fixed_prompt)만으로 등록된다 — 화풍은 이미지 없이도 등록 가능(앵커 없이 fixed_prompt로 일관성). 캐릭터도 텍스트만 등록되지만 외형 일관성엔 레퍼런스 시트가 있어야 강력하다. R2 key(예: "outputs/2026-06/….webp"), 이 서버의 서명 URL, 외부 http(s) URL, data URI, base64 모두 허용 — 생성 결과를 그대로 레퍼런스로 등록 가능',
     ),
   description: z.string().default('').describe('자산 설명 (사람용 메모)'),
   fixed_prompt: z
@@ -372,8 +372,10 @@ const ALLOWED_MODELS = ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1'] as const;
 const generateInput = z.object({
   prompt: z.string().min(1).describe('장면 묘사. style의 화풍 기술문이 자동으로 앞에 결합된다'),
   character: slugField.optional().describe('캐릭터 slug — 등록된 레퍼런스 시트(최대 5장)를 참조로 첨부. 인물 컷이면 지정 권장'),
-  // style은 필수 — 화풍 일관성의 핵심 게이트. 스키마(required) + 핸들러 가드 이중화.
-  style: slugField.describe('화풍 slug (필수) — 등록된 앵커 1~2장 + 고정 화풍 프롬프트가 자동 결합. list_assets로 등록 목록 확인'),
+  // style은 선택 — 지정하면 등록된 앵커+고정 화풍이 자동 결합돼 일관성을 강제(권장). 생략하면 순수 생성.
+  style: slugField
+    .optional()
+    .describe('화풍 slug (선택) — 지정하면 등록된 앵커 1~2장 + 고정 화풍 프롬프트가 자동 결합돼 그림체가 일관되게 강제된다(시리즈 권장). 생략하면 style 없이 순수 생성. list_assets로 등록 목록 확인'),
   quality: z.enum(['low', 'medium', 'high']).default('medium').describe('시안=low, 최종=high'),
   size: z
     .union([z.literal('auto'), z.string().regex(/^\d{3,4}x\d{3,4}$/)])
@@ -514,7 +516,7 @@ export const TOOLS = [
     name: 'generate_image',
     title: '이미지 생성',
     description:
-      'OpenAI 이미지 생성. style slug 필수(화풍 일관성 게이트) — 등록된 앵커를 첨부해 /v1/images/edits로 생성하며, character slug를 더하면 캐릭터 시트도 함께 첨부된다. 결과는 R2에 저장되고 서명 URL과 함께 image block으로 채팅에 인라인으로 띄운다.',
+      'OpenAI 이미지 생성. prompt만으로 바로 생성된다(style 없이 순수 생성 OK — 첫 사용/원샷에 적합). style slug를 주면 등록된 앵커 + 고정 화풍이 자동 결합돼 여러 컷의 그림체가 일관되게 강제된다(시리즈 권장). character slug를 더하면 캐릭터 시트도 첨부. 앵커가 있으면 /v1/images/edits, 없으면 /v1/images/generations로 생성. 결과는 R2에 저장되고 서명 URL과 함께 image block으로 채팅에 인라인으로 띄운다.',
     inputSchema: toInputSchema(generateInput),
     outputSchema: {
       type: 'object',
@@ -552,7 +554,7 @@ export const TOOLS = [
     name: 'generate_batch',
     title: '여러 컷 일괄 생성 (비동기)',
     description:
-      '여러 컷을 한 번의 호출로 큐에 적재한다. 컷이 2개 이상이면 generate_image를 여러 번 부르지 말고 반드시 이 도구를 써라 — 호출 1번·카드 1개로 끝나고, check_jobs(기본 long-poll)를 1회 부르면 완성 컷이 한 번에 갤러리로 표시된다(반복 폴링 불필요). 각 컷은 generate_image와 같은 인자(prompt 필수, style 필수)이며, 공통값은 defaults에 두면 컷마다 반복하지 않아도 된다(보통 style). 이미지 바이트는 싣지 않는다(캐릭터/화풍은 등록된 slug로 참조). 서버가 분당 5장 페이싱·재시도·10분 시간초과를 처리한다.',
+      '여러 컷을 한 번의 호출로 큐에 적재한다. 컷이 2개 이상이면 generate_image를 여러 번 부르지 말고 반드시 이 도구를 써라 — 호출 1번·카드 1개로 끝나고, check_jobs(기본 long-poll)를 1회 부르면 완성 컷이 한 번에 갤러리로 표시된다(반복 폴링 불필요). 각 컷은 generate_image와 같은 인자(prompt만 컷 필수, style은 선택)이며, 공통값은 defaults에 두면 컷마다 반복하지 않아도 된다(보통 style — 시리즈 일관성 원하면 지정). 이미지 바이트는 싣지 않는다(캐릭터/화풍은 등록된 slug로 참조). 서버가 분당 5장 페이싱·재시도·10분 시간초과를 처리한다.',
     inputSchema: toInputSchema(generateBatchInput),
     outputSchema: {
       type: 'object',
@@ -658,7 +660,7 @@ export const TOOLS = [
     name: 'register_character',
     title: '캐릭터 등록',
     description:
-      '캐릭터 레퍼런스 시트(1~5장)를 R2에 등록. fixed_prompt 필수(외형 기술문) — 비우면 거부된다. 같은 slug 재등록은 전체 교체(덮어쓰기). fixed_prompt는 생성 시 역할 지시문에 자동 결합된다. 같은 slug가 style에 이미 있으면 거부되니 confirm:true로 통과.',
+      '캐릭터 레퍼런스 시트(0~5장)를 R2에 등록. fixed_prompt 필수(외형 기술문) — 비우면 거부된다. 이미지는 생략 가능하지만(텍스트만 등록) 캐릭터 외형 일관성엔 시트가 있어야 강력하다(권장 1장 이상). 같은 slug 재등록은 전체 교체(덮어쓰기). fixed_prompt는 생성 시 역할 지시문에 자동 결합된다. 같은 slug가 style에 이미 있으면 거부되니 confirm:true로 통과.',
     inputSchema: toInputSchema(registerInput),
     outputSchema: {
       type: 'object',
@@ -676,7 +678,7 @@ export const TOOLS = [
     name: 'register_style',
     title: '화풍 등록',
     description:
-      '화풍 앵커 이미지(1~5장, 생성 시 앞 2장 사용)를 R2에 등록. fixed_prompt 필수(고정 화풍 기술문) — 비우면 거부된다. fixed_prompt는 모든 생성 프롬프트 맨 앞에 결합된다. 같은 slug 재등록은 전체 교체. 같은 slug가 character에 이미 있으면 거부되니 confirm:true로 통과.',
+      '화풍 앵커 이미지(0~5장, 생성 시 앞 2장 사용)를 R2에 등록. 이미지 없이 fixed_prompt만으로도 등록 가능 — 참조 그림이 없어도 텍스트 화풍(예: "플랫 셀 셰이딩 웹툰, 파스텔")으로 바로 만들 수 있다(첫 사용에 유용). fixed_prompt 필수(고정 화풍 기술문) — 비우면 거부된다. fixed_prompt는 모든 생성 프롬프트 맨 앞에 결합된다. 같은 slug 재등록은 전체 교체. 같은 slug가 character에 이미 있으면 거부되니 confirm:true로 통과.',
     inputSchema: toInputSchema(registerInput),
     outputSchema: {
       type: 'object',
@@ -946,9 +948,11 @@ export function assemblePrompt(
 
   const roleLines: string[] = [];
   if (charMeta) {
-    roleLines.push(
-      `이미지 1~${charMeta.files.length}은 동일 캐릭터의 레퍼런스 시트다. 이 캐릭터의 외형·복장·비율을 정확히 유지하라.`,
-    );
+    if (charMeta.files.length > 0) {
+      roleLines.push(
+        `이미지 1~${charMeta.files.length}은 동일 캐릭터의 레퍼런스 시트다. 이 캐릭터의 외형·복장·비율을 정확히 유지하라.`,
+      );
+    }
     if (charMeta.fixed_prompt) roleLines.push(charMeta.fixed_prompt);
   }
   if (styleAnchorCount > 0) {
@@ -1083,14 +1087,7 @@ async function showCreations(env: Env, origin: string, args: Record<string, unkn
  * 동기 경로와 비동기(enqueue 시 빠른 거절) 경로가 공유한다.
  */
 async function prepareGeneration(env: Env, args: Record<string, unknown>) {
-  // 가드 B: 스키마를 우회한 직접 호출까지 OpenAI 호출 전에 차단 (스키마 필수화 A와 이중화).
-  // 모델이 읽고 자기수정할 수 있는 메시지로 거절한다.
-  const styleRaw = typeof args.style === 'string' ? args.style.trim() : '';
-  if (!styleRaw) {
-    throw new Error(
-      "거부: 'style' slug가 비어 있다. 화풍 일관성을 위해 등록된 style slug가 필수다. list_assets로 등록 목록을 확인한 뒤 style을 지정해 다시 호출하라.",
-    );
-  }
+  // style은 선택 — 지정 시에만 아래에서 등록·완성도를 검증한다(생략하면 순수 생성 허용).
   // 모델 화이트리스트 — 스키마(enum)와 이중화. OpenAI 호출 전 거절 + 허용 목록 안내.
   if (args.model !== undefined && !ALLOWED_MODELS.includes(args.model as (typeof ALLOWED_MODELS)[number])) {
     throw new Error(
@@ -1110,16 +1107,19 @@ async function prepareGeneration(env: Env, args: Record<string, unknown>) {
       `거부: character '${a.character}'는 미완성(draft) — fixed_prompt가 비어 외형 일관성 게이트가 작동하지 않는다. register_character(slug='${a.character}', fixed_prompt='외형 기술문…')로 채운 뒤 다시 생성하라.`,
     );
   }
-  // 가드 B-2: 미등록 slug(오타 포함) 조기 차단 — OpenAI 비용 발생 전.
-  const styleMeta = await loadMeta(env, 'style', a.style);
-  if (!styleMeta) {
-    throw new Error(`거부: style '${a.style}' 미등록 — get_asset(kind='style', slug='${a.style}')로 확인하거나 list_assets로 등록 목록을 보라.`);
-  }
-  // 게이트: 미완성(fixed_prompt 빈) style은 화풍 일관성을 못 건다 → 명시적 거부 + 채우는 법 안내.
-  if (!hasText(styleMeta.fixed_prompt)) {
-    throw new Error(
-      `거부: style '${a.style}'는 미완성(draft) — fixed_prompt가 비어 화풍 일관성 게이트가 작동하지 않는다. register_style(slug='${a.style}', fixed_prompt='화풍 기술문…')로 채운 뒤 다시 생성하라.`,
-    );
+  // style은 선택 — 주어졌을 때만 등록/완성도 검증(오타·미완성 조기 차단, OpenAI 비용 전). 생략하면 null → 순수 생성.
+  let styleMeta: AssetMeta | null = null;
+  if (a.style) {
+    styleMeta = await loadMeta(env, 'style', a.style);
+    if (!styleMeta) {
+      throw new Error(`거부: style '${a.style}' 미등록 — get_asset(kind='style', slug='${a.style}')로 확인하거나 list_assets로 등록 목록을 보라.`);
+    }
+    // 게이트: 미완성(fixed_prompt 빈) style은 화풍 일관성을 못 건다 → 명시적 거부 + 채우는 법 안내.
+    if (!hasText(styleMeta.fixed_prompt)) {
+      throw new Error(
+        `거부: style '${a.style}'는 미완성(draft) — fixed_prompt가 비어 화풍 일관성 게이트가 작동하지 않는다. register_style(slug='${a.style}', fixed_prompt='화풍 기술문…')로 채운 뒤 다시 생성하라.`,
+      );
+    }
   }
   return { a, charMeta, styleMeta };
 }
@@ -1185,7 +1185,7 @@ async function runGeneration(
     quality: a.quality,
     n: a.n,
     character: charMeta ? { slug: charMeta.slug, anchor_urls: charMeta.files } : null,
-    style: { slug: styleMeta.slug, anchor_urls: styleAnchors },
+    style: styleMeta ? { slug: styleMeta.slug, anchor_urls: styleAnchors } : null,
     seed: null,
     seed_note: 'unsupported by gpt-image API',
     usage: resp.usage ?? null,
