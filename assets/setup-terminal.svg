@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="692" viewBox="0 0 880 692" font-family="ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" role="img" aria-label="npm run setup 터미널 예시 화면 — 모든 비밀값은 예시 플레이스홀더입니다">
+  <rect x="0.5" y="0.5" width="879" height="691" rx="11" fill="#16181d" stroke="#2a2d34"/>
+  <path d="M0,11 Q0,0 11,0 L869,0 Q880,0 880,11 L880,42 L0,42 Z" fill="#21262d"/>
+  <circle cx="22" cy="21" r="6" fill="#ff5f56"/>
+  <circle cx="42" cy="21" r="6" fill="#ffbd2e"/>
+  <circle cx="62" cy="21" r="6" fill="#27c93f"/>
+  <text x="92" y="26" font-size="12.5" fill="#8b949e" xml:space="preserve">Terminal — 설치 예시 화면 (모든 값은 플레이스홀더)</text>
+
+  <g font-size="14" xml:space="preserve">
+    <text x="24" y="74"><tspan fill="#56d364">$ </tspan><tspan fill="#e6edf3">npm run setup</tspan></text>
+
+    <text x="24" y="120" fill="#79c0ff">▶ kez-gpt-image-mcp 설치 시작</text>
+    <text x="24" y="143" fill="#79c0ff">▶ 의존성 설치…</text>
+    <text x="24" y="166" fill="#79c0ff">▶ Cloudflare 로그인 확인…</text>
+    <text x="24" y="189"><tspan fill="#8b949e">  로그인 계정: </tspan><tspan fill="#d29922">&lt;your-cloudflare-account&gt;</tspan></text>
+    <text x="24" y="212" fill="#79c0ff">▶ R2 버킷 'kez-gpt-image-assets' 준비…</text>
+
+    <text x="24" y="258"><tspan fill="#e6edf3">OpenAI API 키를 붙여넣고 Enter (화면에 안 보입니다): </tspan><tspan fill="#d29922">••••••••••</tspan></text>
+    <text x="24" y="281" fill="#56d364">✓ Success! Uploaded secret OPENAI_API_KEY</text>
+
+    <text x="24" y="327" fill="#79c0ff">▶ 연결 비밀번호를 정하세요 (커넥터 연결 시 입력할 값)</text>
+    <text x="24" y="350"><tspan fill="#8b949e">  연결 비밀번호 입력 (화면에 안 보임): </tspan><tspan fill="#d29922">••••••</tspan></text>
+    <text x="24" y="373"><tspan fill="#8b949e">  한 번 더 입력: </tspan><tspan fill="#d29922">••••••</tspan></text>
+    <text x="24" y="396" fill="#56d364">✓ Success! Uploaded secret MCP_AUTH_TOKEN</text>
+    <text x="24" y="419" fill="#56d364">✓ Success! Uploaded secret OAUTH_PASSCODE</text>
+    <text x="24" y="442" fill="#56d364">✓ Success! Uploaded secret OAUTH_SIGNING_KEY</text>
+
+    <text x="24" y="488" fill="#79c0ff">▶ 위젯 빌드 + 배포…</text>
+    <text x="24" y="511"><tspan fill="#8b949e">  </tspan><tspan fill="#58a6ff">https://kez-gpt-image-mcp.</tspan><tspan fill="#d29922">&lt;본인&gt;</tspan><tspan fill="#58a6ff">.workers.dev</tspan></text>
+
+    <text x="24" y="557" fill="#484f58">──────────────────────────────────────────────</text>
+    <text x="24" y="580"><tspan fill="#56d364">✓ 배포 완료! </tspan><tspan fill="#e6edf3">claude.ai에 커넥터를 등록하세요</tspan></text>
+    <text x="24" y="603"><tspan fill="#e6edf3">  • URL : </tspan><tspan fill="#58a6ff">https://kez-gpt-image-mcp.</tspan><tspan fill="#d29922">&lt;본인&gt;</tspan><tspan fill="#58a6ff">.workers.dev</tspan></text>
+    <text x="24" y="626" fill="#e6edf3">  연결 시 뜨는 "🔒 연결" 페이지에 위 연결 비밀번호 입력 → 끝</text>
+    <text x="24" y="649" fill="#484f58">──────────────────────────────────────────────</text>
+  </g>
+</svg>

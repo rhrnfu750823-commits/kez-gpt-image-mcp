@@ -69,6 +69,12 @@ openssl rand -hex 32 | npx wrangler secret put OAUTH_SIGNING_KEY  # OAuth code �
 npm run deploy                                          # 위젯 빌드 + 배포 → 끝에 워커 URL
 ```
 
+**설치는 이렇게 진행됩니다** — 아래는 예시 화면입니다(실제 토큰·비밀번호·계정 값은 나오지 않는 플레이스홀더):
+
+<p align="center">
+  <img src="assets/setup-terminal.svg" width="800" alt="npm run setup 예시 터미널 화면 — 모든 값은 플레이스홀더" />
+</p>
+
 ---
 
 ## claude.ai 커넥터 등록
@@ -82,6 +88,20 @@ claude.ai → **Settings → Connectors → Add custom connector**:
 **URL만 넣으면 됩니다.** claude.ai 커넥터에는 이제 Bearer 토큰 입력칸이 없고, 대신 **OAuth로 연결**합니다. **연결(Connect)** 을 누르면 워커가 띄우는 **"🔒 연결" 비밀번호 페이지**가 뜨고, 여기에 설치 때 정한 **연결 비밀번호(`OAUTH_PASSCODE`)** 를 입력하면 됩니다 — 도구를 쓸 때마다가 아니라 **연결할 때 한 번만**. 통과하면 도구가 자동 인식됩니다. 대화창의 도구 아이콘에서 이 커넥터를 **ON**.
 
 > 🔐 **왜 비밀번호인가:** claude.ai는 URL만으로 OAuth 핸드셰이크를 강제합니다. 만약 `/authorize`가 아무에게나 인증 code를 내주면, 워커 URL만 아는 사람이 `/token`으로 access_token을 빼내 남의 OpenAI 예산으로 이미지를 뽑을 수 있습니다. 그래서 `/authorize`에서 **연결 비밀번호로 소유자를 먼저 인증**하고, code는 **PKCE(S256)·redirect_uri에 묶인 서명된 단명 토큰**으로만 발급합니다. (`MCP_AUTH_TOKEN`을 커넥터에 직접 붙여넣던 구버전 안내는 폐기 — 현행 claude.ai UI엔 그 입력칸이 없습니다.)
+
+---
+
+## 레퍼런스 등록 — 화풍·캐릭터 (채팅 안에서 드래그)
+
+"이 그림 화풍으로 등록할래"처럼 말하면 채팅 안에 **끌어놓기 위젯**이 뜹니다. 이미지를 드롭 → **화풍/캐릭터** 선택 → 이름·고정 프롬프트 입력 → 등록. 이미지 바이트는 워커로 직접 올라가 **대화(LLM)를 통과하지 않아 토큰을 쓰지 않습니다.** 등록한 화풍/캐릭터로 여러 컷을 뽑아도 그림체가 일관됩니다.
+
+<p align="center">
+  <img src="assets/register-drag.png" width="520" alt="드래그로 화풍·캐릭터 등록 — 이미지를 화풍/캐릭터 영역에 끌어놓기" />
+</p>
+
+실제 위젯 화면 (채팅 안에 인라인으로 뜸):
+
+<img src="assets/uploader-widget.png" width="400" alt="레퍼런스 업로더 위젯 — 드롭존, 화풍/캐릭터 선택, 이름·고정 프롬프트 입력" />
 
 ---
 
