@@ -32,9 +32,27 @@ read -r -s -p "OpenAI API 키를 붙여넣고 Enter (화면에 안 보입니다)
 printf '%s' "$OPENAI_KEY" | npx wrangler secret put OPENAI_API_KEY
 unset OPENAI_KEY
 
-# 6) 인증 토큰 생성 → 시크릿
+# 6) 인증 토큰 생성 → 시크릿 (내부용: OAuth access_token + 파일서명 HMAC 키)
 AUTH_TOKEN=$(openssl rand -hex 32)
 printf '%s' "$AUTH_TOKEN" | npx wrangler secret put MCP_AUTH_TOKEN
+
+# 6-1) 연결 비밀번호(OAUTH_PASSCODE) — claude.ai 커넥터 연결 시 본인이 입력할 값. 직접 정한다.
+#      (claude.ai는 URL만으로 OAuth를 강제하므로, 이 비번이 익명 토큰 탈취를 막는 진짜 보안 경계)
+echo
+echo "▶ 연결 비밀번호를 정하세요 — claude.ai에서 이 커넥터를 '연결'할 때 입력할 값입니다(연결 시 1회)."
+while :; do
+  read -r -s -p "  연결 비밀번호 입력 (화면에 안 보임): " PASSCODE; echo
+  read -r -s -p "  한 번 더 입력: " PASSCODE2; echo
+  [ -n "$PASSCODE" ] || { echo "  ❌ 비었습니다. 다시."; continue; }
+  [ "$PASSCODE" = "$PASSCODE2" ] || { echo "  ❌ 두 입력이 다릅니다. 다시."; continue; }
+  break
+done
+printf '%s' "$PASSCODE" | npx wrangler secret put OAUTH_PASSCODE
+unset PASSCODE PASSCODE2
+
+# 6-2) OAuth 서명 키(OAUTH_SIGNING_KEY) — 인증 code 서명용 별도 랜덤값(자동). access_token과 분리해
+#      토큰이 유출돼도 code 위조가 불가하게 한다.
+printf '%s' "$(openssl rand -hex 32)" | npx wrangler secret put OAUTH_SIGNING_KEY
 
 # 7) 위젯 빌드 + 배포
 echo "▶ 위젯 빌드 + 배포…"
@@ -49,11 +67,15 @@ cat <<EOF
 ✅ 배포 완료! 이제 claude.ai에 커넥터를 등록하세요.
 
   claude.ai → Settings → Connectors → Add custom connector
-    • URL            : ${WORKER_URL:-<위 배포 출력의 ...workers.dev URL>}
-    • Authentication : Bearer
-    • Bearer Token   : $AUTH_TOKEN
+    • URL : ${WORKER_URL:-<위 배포 출력의 ...workers.dev URL>}
+    (Bearer 토큰 입력칸은 없습니다 — claude.ai가 OAuth로 연결합니다)
 
-  ⚠ 이 Bearer 토큰을 비밀번호 관리자에 지금 저장하세요.
-    (보안상 wrangler는 시크릿 값을 다시 보여주지 않습니다 — 이 출력만 유효)
+  '연결'을 누르면 뜨는 "🔒 연결" 페이지에
+  위에서 정한 연결 비밀번호(OAUTH_PASSCODE)를 입력하면 끝입니다.
+
+  ⓘ MCP_AUTH_TOKEN 은 이제 claude.ai에 붙여넣지 않습니다(OAuth가 내부적으로 발급).
+    다만 유출 시 연결을 무효화하는 kill-switch로 쓰이니, 아래 값은 보관해 두세요
+    (wrangler는 시크릿을 다시 보여주지 않습니다 — 이 출력만 유효):
+    $AUTH_TOKEN
 ──────────────────────────────────────────────
 EOF

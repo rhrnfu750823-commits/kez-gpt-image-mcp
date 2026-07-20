@@ -114,6 +114,7 @@ beforeEach(() => {
   env = {
     OPENAI_API_KEY: 'sk-test-secret-key-123456',
     MCP_AUTH_TOKEN: 'test-token',
+    OAUTH_PASSCODE: 'test-passcode',
     ASSETS: r2 as unknown as R2Bucket,
   };
   openaiCalls = [];
@@ -1658,64 +1659,127 @@ describe('자산 완성도 게이트', () => {
 
 // ---------- OAuth 핸드셰이크 (claude.ai Custom Connector) ----------
 
-describe('OAuth handshake', () => {
-  it('.well-known 메타데이터 → 200', async () => {
+describe('OAuth handshake (passcode gate + PKCE)', () => {
+  const RU = 'https://claude.ai/api/mcp/auth_callback';
+  function b64url(bytes: Uint8Array): string {
+    return Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  // PKCE(S256): 임의 verifier → SHA-256 → base64url challenge (워커 검증과 동일 방식)
+  async function pkce(): Promise<{ verifier: string; challenge: string }> {
+    const verifier = 'kez-test-verifier-0123456789abcdefghijklmnopqrstuvwxyz';
+    const dig = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+    return { verifier, challenge: b64url(dig) };
+  }
+  function postForm(path: string, fields: Record<string, string>): Request {
+    return new Request(`${ORIGIN}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams(fields).toString(),
+    });
+  }
+  const authForm = (challenge: string, passcode: string, extra: Record<string, string> = {}) =>
+    postForm('/authorize', {
+      redirect_uri: RU,
+      response_type: 'code',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      passcode,
+      ...extra,
+    });
+
+  it('.well-known 메타데이터 → 200, PKCE는 S256만 광고(plain 다운그레이드 차단)', async () => {
     const res = await worker.fetch(new Request(`${ORIGIN}/.well-known/oauth-authorization-server`), env);
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { token_endpoint: string };
+    const json = (await res.json()) as { token_endpoint: string; code_challenge_methods_supported: string[] };
     expect(json.token_endpoint).toBe(`${ORIGIN}/token`);
+    expect(json.code_challenge_methods_supported).toEqual(['S256']);
   });
 
-  it('/authorize는 claude.ai/claude.com 리다이렉트만 허용', async () => {
-    const bad = await worker.fetch(
-      new Request(`${ORIGIN}/authorize?redirect_uri=${encodeURIComponent('https://evil.com/cb')}&response_type=code`),
-      env,
-    );
-    expect(bad.status).toBe(400);
-
-    const good = await worker.fetch(
+  it('/authorize GET: evil 리다이렉트 400 · PKCE 없으면 400 · 정상은 즉시 code가 아니라 비번 폼(200 HTML)', async () => {
+    const { challenge } = await pkce();
+    const evil = await worker.fetch(
       new Request(
-        `${ORIGIN}/authorize?redirect_uri=${encodeURIComponent('https://claude.ai/api/mcp/auth_callback')}&response_type=code&state=xyz`,
+        `${ORIGIN}/authorize?redirect_uri=${encodeURIComponent('https://evil.com/cb')}&response_type=code&code_challenge=${challenge}&code_challenge_method=S256`,
       ),
       env,
     );
-    expect(good.status).toBe(302);
-    expect(good.headers.get('Location')).toContain('https://claude.ai/api/mcp/auth_callback?code=');
+    expect(evil.status).toBe(400);
+
+    const noPkce = await worker.fetch(
+      new Request(`${ORIGIN}/authorize?redirect_uri=${encodeURIComponent(RU)}&response_type=code`),
+      env,
+    );
+    expect(noPkce.status).toBe(400);
+
+    const form = await worker.fetch(
+      new Request(`${ORIGIN}/authorize?redirect_uri=${encodeURIComponent(RU)}&response_type=code&code_challenge=${challenge}&code_challenge_method=S256`),
+      env,
+    );
+    expect(form.status).toBe(200);
+    expect(form.headers.get('Content-Type')).toContain('text/html');
+    expect(await form.text()).toContain('name="passcode"');
   });
 
-  it('🔒 /token: 임의 POST로는 토큰 못 받음 — /authorize가 서명한 code만 교환', async () => {
-    // 공격: code 없이/가짜 code로 /token 직접 POST → 토큰 탈취 시도
+  it('🔒 /authorize POST: 틀린 비번 → 401(code 미발급) · 맞는 비번 → 302(code 발급)', async () => {
+    const { challenge } = await pkce();
+    const wrong = await worker.fetch(authForm(challenge, 'wrong-passcode'), env);
+    expect(wrong.status).toBe(401);
+    expect(wrong.headers.get('Location')).toBeNull();
+
+    const ok = await worker.fetch(authForm(challenge, 'test-passcode', { state: 'xyz' }), env);
+    expect(ok.status).toBe(302);
+    const loc = ok.headers.get('Location')!;
+    expect(loc).toContain(`${RU}?code=`);
+    expect(loc).toContain('state=xyz');
+  });
+
+  it('🔒 /token: 익명·가짜 code로는 토큰 못 받음 (옆문 차단)', async () => {
     const noCode = await worker.fetch(new Request(`${ORIGIN}/token`, { method: 'POST', body: '' }), env);
     expect(noCode.status).toBe(400);
-    const fakeCode = await worker.fetch(
-      new Request(`${ORIGIN}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'grant_type=authorization_code&code=anything-i-want',
-      }),
+    const fake = await worker.fetch(
+      postForm('/token', { grant_type: 'authorization_code', code: 'anything-i-want', redirect_uri: RU }),
       env,
     );
-    expect(fakeCode.status).toBe(400);
-    expect(((await fakeCode.json()) as { access_token?: string }).access_token).toBeUndefined();
+    expect(fake.status).toBe(400);
+    expect(((await fake.json()) as { access_token?: string }).access_token).toBeUndefined();
+  });
 
-    // 정상 흐름: /authorize가 준 서명 code → /token이 교환 허용
-    const auth = await worker.fetch(
-      new Request(
-        `${ORIGIN}/authorize?redirect_uri=${encodeURIComponent('https://claude.ai/api/mcp/auth_callback')}&response_type=code`,
-      ),
+  it('정상 흐름: 비번 통과 code + 올바른 PKCE verifier → /token 200 access_token (틀린 verifier는 400)', async () => {
+    const { verifier, challenge } = await pkce();
+    const auth = await worker.fetch(authForm(challenge, 'test-passcode'), env);
+    const code = new URL(auth.headers.get('Location')!).searchParams.get('code')!;
+
+    // 틀린 verifier → PKCE 실패 400 (code 를 훔쳐도 verifier 없이는 무용)
+    const badVer = await worker.fetch(
+      postForm('/token', { grant_type: 'authorization_code', code, redirect_uri: RU, code_verifier: 'not-the-verifier' }),
       env,
     );
-    const code = new URL(auth.headers.get('Location')!).searchParams.get('code')!;
+    expect(badVer.status).toBe(400);
+
+    // redirect_uri 불일치 → 400
+    const badRu = await worker.fetch(
+      postForm('/token', { grant_type: 'authorization_code', code, redirect_uri: 'https://claude.ai/other', code_verifier: verifier }),
+      env,
+    );
+    expect(badRu.status).toBe(400);
+
+    // 올바른 verifier + redirect_uri → 200
     const tok = await worker.fetch(
-      new Request(`${ORIGIN}/token`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=authorization_code&code=${encodeURIComponent(code)}`,
-      }),
+      postForm('/token', { grant_type: 'authorization_code', code, redirect_uri: RU, code_verifier: verifier }),
       env,
     );
     expect(tok.status).toBe(200);
-    expect(((await tok.json()) as { access_token: string }).access_token).toBe('test-token');
+    const body = (await tok.json()) as { access_token: string; refresh_token: string };
+    expect(body.access_token).toBe('test-token');
+    expect(body.refresh_token).toBeTruthy();
+
+    // refresh_token 그랜트 → 다시 access_token
+    const refreshed = await worker.fetch(
+      postForm('/token', { grant_type: 'refresh_token', refresh_token: body.refresh_token }),
+      env,
+    );
+    expect(refreshed.status).toBe(200);
+    expect(((await refreshed.json()) as { access_token: string }).access_token).toBe('test-token');
   });
 });
 

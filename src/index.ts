@@ -29,6 +29,17 @@ interface ImagesService {
 export interface Env {
   OPENAI_API_KEY: string;
   MCP_AUTH_TOKEN: string;
+  /**
+   * 커넥터 연결 비밀번호 (OAuth /authorize 게이트). claude.ai가 URL만으로 OAuth를 강제하므로,
+   * 이 비번을 통과해야만 access_token을 발급한다 — URL만 아는 익명 호출자의 토큰 탈취(옆문)를 차단.
+   * 필수: 미설정이면 /authorize POST가 무조건 거부(열린 서버 방지).
+   */
+  OAUTH_PASSCODE?: string;
+  /**
+   * OAuth 서명 code/refresh_token의 HMAC 키. 미설정 시 MCP_AUTH_TOKEN으로 폴백.
+   * 별도 랜덤값으로 두면 access_token이 유출돼도 인증 code 위조가 불가(블래스트 반경 격리).
+   */
+  OAUTH_SIGNING_KEY?: string;
   ASSETS: R2Bucket;
   /**
    * 선택 — wrangler.toml에 `[images] binding = "IMAGES"` 추가 시 활성.
@@ -1691,29 +1702,73 @@ async function handleRpc(req: Request, env: Env, origin: string): Promise<Respon
 
 // ---------- OAuth 2.0 endpoints (claude.ai Custom Connector handshake) ----------
 //
-// /authorize가 서명된 1회용 code(HMAC+5분 만료)를 발급하고, /token은 그 서명을 검증해야만
-// access_token(=MCP_AUTH_TOKEN)을 내준다. → /token에 직접 POST해서 토큰을 빼가는 공격을 차단.
-// (redirect_uri는 claude.ai/claude.com만 허용하므로 정상 code는 공격자에게 전달되지 않는다.)
+// claude.ai의 Custom Connector는 Bearer Token 필드와 무관하게 OAuth 2.0 PKCE를 강제 수행한다.
+// 보안: /authorize 에서 소유자(연결 비밀번호 OAUTH_PASSCODE) 인증을 통과해야만 서명된 인증 code 를
+// 발급하고, /token 은 그 서명 code(또는 refresh_token)·redirect_uri·PKCE 가 전부 유효해야만
+// access_token(=MCP_AUTH_TOKEN) 을 내준다.
+// → URL 만 아는 익명 호출자는 유효 code 를 못 얻어 /token 으로 토큰을 못 빼간다(연결 비밀번호 = 진짜 보안 경계).
+// (구설계 결함: /authorize 가 즉시 code 를 발급하면 공격자가 자기가 호출해 302 에서 code 를 읽어
+//  /token 으로 교환할 수 있었다 — "redirect_uri 제한 = 보안"은 가정 오류였다.)
 
-/** 서명된 1회용 authorization code — /authorize 발급, /token 검증. 무상태(HMAC+만료). */
-async function issueAuthCode(env: Env): Promise<string> {
-  const payload = `${Date.now() + 300_000}.${crypto.randomUUID()}`;
-  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.MCP_AUTH_TOKEN), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const mac = await crypto.subtle.sign('HMAC', k, new TextEncoder().encode('authcode:' + payload));
-  const sig = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  return `${payload}.${sig}`;
+function b64urlFromBytes(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
-async function verifyAuthCode(env: Env, code: string): Promise<boolean> {
-  const i = code.lastIndexOf('.');
-  if (i < 0) return false;
-  const payload = code.slice(0, i);
-  const sig = code.slice(i + 1);
-  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.MCP_AUTH_TOKEN), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const mac = await crypto.subtle.sign('HMAC', k, new TextEncoder().encode('authcode:' + payload));
-  const expected = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  if (!safeEqual(sig, expected)) return false;
-  const exp = Number(payload.split('.')[0]);
-  return Number.isFinite(exp) && Date.now() <= exp;
+function b64urlToBytes(s: string): Uint8Array {
+  const pad = (4 - (s.length % 4)) % 4;
+  const binary = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat(pad));
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+async function hmacSha256(key: string, msg: string): Promise<string> {
+  const k = await crypto.subtle.importKey('raw', new TextEncoder().encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(msg));
+  return b64urlFromBytes(new Uint8Array(sig));
+}
+// 서명 토큰 = base64url(JSON payload) + "." + HMAC-SHA256(payload). 키는 OAUTH_SIGNING_KEY(없으면 MCP_AUTH_TOKEN).
+async function signToken(env: Env, payload: Record<string, unknown>): Promise<string> {
+  const body = b64urlFromBytes(new TextEncoder().encode(JSON.stringify(payload)));
+  return `${body}.${await hmacSha256(env.OAUTH_SIGNING_KEY || env.MCP_AUTH_TOKEN, body)}`;
+}
+async function verifyToken(env: Env, token: string): Promise<Record<string, unknown> | null> {
+  const dot = token.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const body = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = await hmacSha256(env.OAUTH_SIGNING_KEY || env.MCP_AUTH_TOKEN, body);
+  if (sig.length !== expected.length || !safeEqual(sig, expected)) return null;
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(b64urlToBytes(body)));
+  } catch {
+    return null;
+  }
+  if (typeof payload.exp === 'number' && payload.exp < Math.floor(Date.now() / 1000)) return null;
+  return payload;
+}
+async function issueTokens(env: Env): Promise<Record<string, unknown>> {
+  return {
+    access_token: env.MCP_AUTH_TOKEN,
+    token_type: 'Bearer',
+    expires_in: 60 * 60 * 24 * 30,
+    refresh_token: await signToken(env, { t: 'refresh', exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 90 }),
+    scope: 'mcp',
+  };
+}
+const OAUTH_CARRY = ['redirect_uri', 'state', 'code_challenge', 'code_challenge_method', 'client_id', 'scope', 'resource'];
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+/** 연결 비밀번호 입력 폼 — /authorize GET에서 표시, POST로 제출. OAuth 파라미터는 hidden으로 실어 나른다. */
+function authorizeFormHtml(get: (k: string) => string | null, error?: string): string {
+  const hidden = OAUTH_CARRY.map((k) => {
+    const v = get(k);
+    return v == null ? '' : `<input type="hidden" name="${k}" value="${escapeHtml(v)}">`;
+  }).join('');
+  const err = error ? `<p class="err">${escapeHtml(error)}</p>` : '';
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>kez gpt-image 연결 인증</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#0f0f10;color:#e8e8e8;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}.card{background:#1a1a1c;border:1px solid #2a2a2e;border-radius:14px;padding:32px;max-width:360px;width:90%}h1{font-size:17px;margin:0 0 6px}p{font-size:13px;color:#9a9aa2;margin:0 0 18px;line-height:1.5}input[type=password]{width:100%;box-sizing:border-box;padding:11px 13px;border-radius:9px;border:1px solid #33333a;background:#101013;color:#fff;font-size:15px}button{width:100%;margin-top:14px;padding:11px;border:0;border-radius:9px;background:#4f7cff;color:#fff;font-size:15px;font-weight:600;cursor:pointer}.err{color:#ff6b6b;font-size:13px;margin:0 0 12px}</style></head><body><div class="card"><h1>🔒 kez gpt-image 연결</h1><p>이 워커에 연결하려면 설정한 <b>연결 비밀번호</b>(OAUTH_PASSCODE)를 입력하세요. 도구를 쓸 때마다가 아니라, <b>연결할 때 한 번만</b> 입력합니다.</p>${err}<form method="POST" action="/authorize">${hidden}<input type="password" name="passcode" placeholder="연결 비밀번호" autofocus required><button type="submit">연결</button></form></div></body></html>`;
 }
 
 function oauthMetadata(host: string) {
@@ -1724,7 +1779,7 @@ function oauthMetadata(host: string) {
     registration_endpoint: `https://${host}/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
-    code_challenge_methods_supported: ['S256', 'plain'],
+    code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none', 'client_secret_post', 'client_secret_basic'],
     scopes_supported: ['mcp'],
   };
@@ -1774,7 +1829,6 @@ async function handleOAuth(req: Request, env: Env, url: URL): Promise<Response |
   if (req.method === 'GET' && pathname === '/authorize') {
     const params = url.searchParams;
     const redirectUri = params.get('redirect_uri') || '';
-    const state = params.get('state') || '';
     const responseType = params.get('response_type') || '';
 
     if (!redirectUri) return new Response('Missing redirect_uri', { status: 400, headers: CORS_HEADERS });
@@ -1787,35 +1841,91 @@ async function handleOAuth(req: Request, env: Env, url: URL): Promise<Response |
     if (responseType !== 'code') {
       return new Response('Only response_type=code supported', { status: 400, headers: CORS_HEADERS });
     }
+    // PKCE 필수(S256): claude.ai 는 항상 보냄. 없거나 plain 이면 거부해 다운그레이드 차단.
+    if (!params.get('code_challenge') || (params.get('code_challenge_method') || '') !== 'S256') {
+      return new Response('PKCE code_challenge (S256) required', { status: 400, headers: CORS_HEADERS });
+    }
 
-    const code = await issueAuthCode(env); // 서명된 1회용 code (랜덤 UUID 아님)
+    // 보안: 즉시 code 를 발급하지 않고, 소유자(연결 비밀번호) 인증 폼을 먼저 보여준다.
+    return new Response(authorizeFormHtml((k) => params.get(k)), {
+      status: 200,
+      headers: { 'Content-Type': 'text/html; charset=utf-8', ...CORS_HEADERS },
+    });
+  }
+
+  if (req.method === 'POST' && pathname === '/authorize') {
+    const form = await req.formData();
+    const get = (k: string) => {
+      const v = form.get(k);
+      return v == null ? null : String(v);
+    };
+    const redirectUri = get('redirect_uri') || '';
+    const state = get('state') || '';
+    if (!isAllowedRedirect(redirectUri)) {
+      return new Response('Invalid redirect_uri', { status: 400, headers: CORS_HEADERS });
+    }
+    // 연결 비밀번호 상수시간 비교. 미설정이거나 틀리면 폼 재표시(401) — 열린 서버 방지.
+    const passcode = String(form.get('passcode') || '');
+    if (!env.OAUTH_PASSCODE || passcode.length !== env.OAUTH_PASSCODE.length || !safeEqual(passcode, env.OAUTH_PASSCODE)) {
+      return new Response(authorizeFormHtml(get, '연결 비밀번호가 올바르지 않습니다.'), {
+        status: 401,
+        headers: { 'Content-Type': 'text/html; charset=utf-8', ...CORS_HEADERS },
+      });
+    }
+    // 통과 → PKCE 챌린지·redirect_uri 에 묶인 서명된 단명(2분) code 발급.
+    const code = await signToken(env, {
+      t: 'code',
+      ru: redirectUri,
+      cc: get('code_challenge') || '',
+      ccm: get('code_challenge_method') || '',
+      exp: Math.floor(Date.now() / 1000) + 120,
+    });
     const cb = new URL(redirectUri);
     cb.searchParams.set('code', code);
     if (state) cb.searchParams.set('state', state);
-
     return new Response(null, { status: 302, headers: { Location: cb.toString(), ...CORS_HEADERS } });
   }
 
   if (req.method === 'POST' && pathname === '/token') {
-    // /authorize가 서명한 유효한 code만 토큰으로 교환 — 직접 POST로 토큰 탈취 차단.
-    const raw = await req.text();
-    let code = new URLSearchParams(raw).get('code') || '';
-    if (!code) {
-      try {
-        code = String((JSON.parse(raw) as { code?: unknown }).code || '');
-      } catch {
-        /* form도 json도 아님 */
+    // 폼/JSON 모두 수용 (claude.ai 는 application/x-www-form-urlencoded).
+    let p: Record<string, string> = {};
+    const ct = req.headers.get('Content-Type') || '';
+    try {
+      if (ct.includes('application/json')) {
+        p = (await req.json()) as Record<string, string>;
+      } else {
+        const f = await req.formData();
+        for (const [k, v] of f) p[k] = String(v);
       }
+    } catch {
+      // ignore parse failure
     }
-    if (!code || !(await verifyAuthCode(env, code))) {
-      return jsonResponse({ error: 'invalid_grant', error_description: '유효하지 않거나 만료된 authorization code' }, 400);
+
+    // refresh_token 그랜트: 이전에 비밀번호로 인증해 발급받은 서명 refresh_token 이어야 한다.
+    if (p.grant_type === 'refresh_token') {
+      const rt = await verifyToken(env, p.refresh_token || '');
+      if (!rt || rt.t !== 'refresh') return jsonResponse({ error: 'invalid_grant' }, 400);
+      return jsonResponse(await issueTokens(env));
     }
-    return jsonResponse({
-      access_token: env.MCP_AUTH_TOKEN,
-      token_type: 'Bearer',
-      expires_in: 60 * 60 * 24 * 30,
-      scope: 'mcp',
-    });
+
+    // authorization_code 그랜트: 반드시 /authorize→소유자 인증을 통과해 발급된 "서명된 code" 여야 한다.
+    // → URL 만 아는 익명 호출자는 유효 code 가 없어 여기서 막힌다(옆문 차단).
+    const codePayload = await verifyToken(env, p.code || '');
+    if (!codePayload || codePayload.t !== 'code') {
+      return jsonResponse({ error: 'invalid_grant', error_description: 'invalid or missing authorization code' }, 400);
+    }
+    // redirect_uri 는 /authorize 때 묶인 값과 정확히 일치해야 한다(필수).
+    if (!p.redirect_uri || p.redirect_uri !== codePayload.ru) {
+      return jsonResponse({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' }, 400);
+    }
+    // PKCE 검증(필수·S256·무조건): code 에 묶인 code_challenge 와 제출된 code_verifier 대조.
+    const cc = String(codePayload.cc || '');
+    const verifier = p.code_verifier || '';
+    const dig = b64urlFromBytes(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
+    if (!cc || !verifier || dig.length !== cc.length || !safeEqual(dig, cc)) {
+      return jsonResponse({ error: 'invalid_grant', error_description: 'PKCE verification failed' }, 400);
+    }
+    return jsonResponse(await issueTokens(env));
   }
 
   if (req.method === 'GET' && pathname === '/favicon.ico') {

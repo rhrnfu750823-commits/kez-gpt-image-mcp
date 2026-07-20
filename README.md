@@ -16,7 +16,7 @@ OpenAI **gpt-image**를 Claude(claude.ai · 데스크탑 · 폰)에 붙여, **�
 - 🎨 **레퍼런스(화풍·캐릭터) 등록을 채팅 안에서** — 채팅에 뜨는 **끌어놓기 위젯**에 이미지를 드롭하면 곧바로 저장소(R2)에 올라가 앵커로 등록됩니다. 이미지 바이트가 LLM(대화)을 **통과하지 않아** 토큰을 쓰지 않습니다. 등록한 화풍/캐릭터로 **일관된 시리즈**를 생성할 수 있습니다.
 - 🧩 **화풍 일관성 게이트** — style을 필수로 두고 등록된 앵커 + 고정 프롬프트를 자동 결합해, 여러 컷을 뽑아도 그림체가 흔들리지 않습니다. (미완성 화풍은 생성 단계에서 막아 "조용한 실패"를 방지)
 - ⚡ **배치 생성** — 여러 컷을 한 번의 호출로 큐에 올리고(`generate_batch`), 완성된 컷들을 한 번에 위젯으로 회수(`check_jobs`). 분당 페이싱·자동 재시도·10분 시간초과까지 서버가 알아서 처리.
-- 🔐 **보안 내장** — 비공개 R2 + HMAC 서명 URL, Bearer 인증, 업로드 전용 저권한 토큰 분리.
+- 🔐 **보안 내장** — 비공개 R2 + HMAC 서명 URL, **OAuth 연결 비밀번호 게이트(PKCE S256)**, 업로드 전용 저권한 토큰 분리. (claude.ai는 URL만으로 OAuth를 강제하므로, 연결 비밀번호가 익명 토큰 탈취를 막는 실제 보안 경계입니다.)
 
 **제공 도구(claude.ai가 자동 인식):**
 `generate_image` · `generate_batch` · `check_jobs` · `show_creations` · `open_reference_uploader` · `register_character` · `register_style` · `list_assets` · `get_asset` · `delete_asset`
@@ -41,9 +41,11 @@ OpenAI **gpt-image**를 Claude(claude.ai · 데스크탑 · 폰)에 붙여, **�
 2) npx wrangler login 하고 어느 계정인지 보여줘.
 3) wrangler.toml의 bucket_name 으로 R2 버킷을 만들어줘 (npx wrangler r2 bucket create ...).
 4) OPENAI_API_KEY 시크릿에 내 OpenAI 키를 넣어줘 — 나한테 물어보고, 화면·로그에 절대 출력하지 마.
-5) openssl rand -hex 32 로 MCP_AUTH_TOKEN 을 만들어 시크릿에 넣고, 그 토큰 값은 나한테 보여줘(커넥터에 쓸 거라).
-6) npm run build:widget 후 npx wrangler deploy 하고 워커 URL을 알려줘.
-끝나면 claude.ai 커넥터에 넣을 URL과 Bearer 토큰을 정리해서 보여줘.
+5) openssl rand -hex 32 로 MCP_AUTH_TOKEN 을 만들어 시크릿에 넣어(내부용이라 나한테 안 보여줘도 돼).
+6) 연결 비밀번호를 나한테 물어봐서 OAUTH_PASSCODE 시크릿에 넣어줘(커넥터 연결할 때 내가 입력할 값이야). 화면·로그엔 절대 출력하지 마.
+7) openssl rand -hex 32 로 OAUTH_SIGNING_KEY 를 만들어 시크릿에 넣어(자동, 나한테 안 보여줘도 돼).
+8) npm run build:widget 후 npx wrangler deploy 하고 워커 URL을 알려줘.
+끝나면 claude.ai 커넥터에 넣을 URL을 보여주고, 연결 시 뜨는 비밀번호 페이지에 OAUTH_PASSCODE 를 입력하면 된다고 안내해줘.
 ```
 
 ## 설치 — 방법 2: 셋업 스크립트 (터미널 원터치)
@@ -52,7 +54,7 @@ OpenAI **gpt-image**를 Claude(claude.ai · 데스크탑 · 폰)에 붙여, **�
 npm run setup
 ```
 
-로그인 → R2 버킷 → OpenAI 키 입력 → 인증 토큰 자동 생성 → 빌드·배포 까지 차례로 처리하고, 끝에 **커넥터에 넣을 URL·토큰**을 출력합니다.
+로그인 → R2 버킷 → OpenAI 키 입력 → 인증 토큰 자동 생성 → **연결 비밀번호 입력** → 서명 키 자동 생성 → 빌드·배포 까지 차례로 처리하고, 끝에 **커넥터에 넣을 URL**과 연결 방법을 출력합니다.
 
 ## 설치 — 방법 3: 수동 (CLI)
 
@@ -61,8 +63,9 @@ npm install
 npx wrangler login
 npx wrangler r2 bucket create kez-gpt-image-assets      # wrangler.toml의 bucket_name과 동일하게
 npx wrangler secret put OPENAI_API_KEY                  # 본인 OpenAI 키 입력
-openssl rand -hex 32                                    # 출력값 복사 (커넥터 Bearer 토큰)
-npx wrangler secret put MCP_AUTH_TOKEN                  # 위 openssl 값을 입력
+openssl rand -hex 32 | npx wrangler secret put MCP_AUTH_TOKEN     # 내부용 토큰(자동 생성값)
+npx wrangler secret put OAUTH_PASSCODE                  # 연결 비밀번호 — 본인이 정함(커넥터 연결 시 입력할 값)
+openssl rand -hex 32 | npx wrangler secret put OAUTH_SIGNING_KEY  # OAuth code 서명 키(별도 랜덤)
 npm run deploy                                          # 위젯 빌드 + 배포 → 끝에 워커 URL
 ```
 
@@ -75,10 +78,10 @@ claude.ai → **Settings → Connectors → Add custom connector**:
 | 필드 | 값 |
 |------|-----|
 | URL | 배포된 워커 URL (예: `https://kez-gpt-image-mcp.<본인>.workers.dev`) |
-| Authentication | **Bearer** |
-| Bearer Token | 위에서 만든 `MCP_AUTH_TOKEN` 값 |
 
-저장하면 도구가 자동 인식됩니다. 대화창의 도구 아이콘에서 이 커넥터를 **ON**.
+**URL만 넣으면 됩니다.** claude.ai 커넥터에는 이제 Bearer 토큰 입력칸이 없고, 대신 **OAuth로 연결**합니다. **연결(Connect)** 을 누르면 워커가 띄우는 **"🔒 연결" 비밀번호 페이지**가 뜨고, 여기에 설치 때 정한 **연결 비밀번호(`OAUTH_PASSCODE`)** 를 입력하면 됩니다 — 도구를 쓸 때마다가 아니라 **연결할 때 한 번만**. 통과하면 도구가 자동 인식됩니다. 대화창의 도구 아이콘에서 이 커넥터를 **ON**.
+
+> 🔐 **왜 비밀번호인가:** claude.ai는 URL만으로 OAuth 핸드셰이크를 강제합니다. 만약 `/authorize`가 아무에게나 인증 code를 내주면, 워커 URL만 아는 사람이 `/token`으로 access_token을 빼내 남의 OpenAI 예산으로 이미지를 뽑을 수 있습니다. 그래서 `/authorize`에서 **연결 비밀번호로 소유자를 먼저 인증**하고, code는 **PKCE(S256)·redirect_uri에 묶인 서명된 단명 토큰**으로만 발급합니다. (`MCP_AUTH_TOKEN`을 커넥터에 직접 붙여넣던 구버전 안내는 폐기 — 현행 claude.ai UI엔 그 입력칸이 없습니다.)
 
 ---
 
@@ -96,7 +99,7 @@ claude.ai → **Settings → Connectors → Add custom connector**:
 - **과금:** OpenAI gpt-image 사용량만큼 **본인 OpenAI 계정**에 과금됩니다(컷당 대략 수 센트, 화질·해상도에 따라). Cloudflare(Worker·R2·DO)는 무료 한도 안에서 사실상 0원.
 - **R2:** Cloudflare 대시보드에서 R2를 1회 활성화해야 합니다(버킷 생성 포함).
 - **Cloudflare Images(선택):** 앵커 다운스케일에 쓰이며, 미활성이면 원본 전송으로 자동 폴백 — 기능 저하 없음.
-- **시크릿 안전:** `OPENAI_API_KEY`·`MCP_AUTH_TOKEN`은 `wrangler secret` 으로만 등록되고 **코드·git에 절대 들어가지 않습니다.** (로컬 개발은 `.dev.vars.example` 참고)
+- **시크릿 안전:** `OPENAI_API_KEY`·`MCP_AUTH_TOKEN`·`OAUTH_PASSCODE`·`OAUTH_SIGNING_KEY`는 `wrangler secret` 으로만 등록되고 **코드·git에 절대 들어가지 않습니다.** (`OAUTH_SIGNING_KEY`는 선택 — 미설정 시 `MCP_AUTH_TOKEN`으로 폴백하지만, 별도 랜덤값 권장.) 유출 대응: `MCP_AUTH_TOKEN`을 회전(재등록+재배포)하면 기존 연결·서명 URL이 전부 무효화되는 kill-switch가 됩니다.
 - **갱신:** 코드를 고치면 `npm run deploy` 로 다시 배포(워커는 git push로 자동 반영되지 않습니다).
 
 ---

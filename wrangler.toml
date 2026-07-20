@@ -48,5 +48,7 @@ name = "JOBS"
 class_name = "JobQueue"
 
 # 시크릿은 wrangler CLI로 별도 등록 — 이 파일에 평문 절대 금지:
-#   npx wrangler secret put OPENAI_API_KEY   ← 본인 OpenAI API 키 (https://platform.openai.com/api-keys)
-#   npx wrangler secret put MCP_AUTH_TOKEN   ← openssl rand -hex 32 결과 (커넥터 인증용, 본인이 새로 생성)
+#   npx wrangler secret put OPENAI_API_KEY    ← 본인 OpenAI API 키 (https://platform.openai.com/api-keys)
+#   npx wrangler secret put MCP_AUTH_TOKEN    ← openssl rand -hex 32 결과 (내부용: OAuth access_token + 파일서명 HMAC 키)
+#   npx wrangler secret put OAUTH_PASSCODE    ← 커넥터 연결 시 입력할 "연결 비밀번호"(본인이 정함). 익명 토큰 탈취를 막는 보안 경계
+#   npx wrangler secret put OAUTH_SIGNING_KEY ← openssl rand -hex 32 결과 (OAuth code 서명 키, 별도 랜덤. 미설정 시 MCP_AUTH_TOKEN 재사용)
