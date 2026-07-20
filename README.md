@@ -45,7 +45,7 @@ OpenAI **gpt-image**를 Claude(claude.ai · 데스크탑 · 폰)에 붙여, **�
 
 > 입력 항목: `OPENAI_API_KEY`(OpenAI 키), `MCP_AUTH_TOKEN`(아무 긴 무작위 문자열 — `openssl rand -hex 32` 결과 권장), `OAUTH_PASSCODE`(본인이 정하는 연결 비밀번호). `OAUTH_SIGNING_KEY`는 선택이며 비우면 자동으로 `MCP_AUTH_TOKEN`을 재사용합니다.
 >
-> **비워둬도 되는 칸:** `PROTECTED_SLUGS`(고급·잠금 목록, 보통 빈 값) · `Location hint`(R2 지역 자동선택). **처음 R2를 쓰는 계정**이면 폼에서 **R2 활성화**를 한 번 요구할 수 있는데, `Upgrade`/활성화를 누르면 됩니다 — 무료 한도(10GB 등) 안에선 과금 0입니다.
+> **비워둬도 되는 칸:** `PROTECTED_SLUGS`(고급·잠금 목록, 보통 빈 값) · `Location hint`(R2 지역 자동선택). **처음 R2를 쓰는 계정**이면 폼에서 **R2 활성화**를 한 번 요구합니다 — `Upgrade`/활성화를 누르고 **결제수단(카드)을 1회 등록**하면 됩니다. R2 free tier(10GB·egress 0 등)는 **영구 무료**라 이 앱 사용량에선 **청구가 사실상 0**이지만, Cloudflare가 R2 활성화에 카드 등록을 요구합니다(**터미널 방식도 동일** — R2는 어느 방식이든 계정에 1회 활성화 필요).
 
 터미널로 직접 하고 싶으면 아래 방법 1~3 중 하나를 쓰세요.
 
@@ -135,7 +135,7 @@ claude.ai → **Settings → Connectors → Add custom connector**:
 ## 비용·운영 메모
 
 - **과금:** OpenAI gpt-image 사용량만큼 **본인 OpenAI 계정**에 과금됩니다(컷당 대략 수 센트, 화질·해상도에 따라). Cloudflare(Worker·R2·DO)는 무료 한도 안에서 사실상 0원.
-- **R2:** Cloudflare 대시보드에서 R2를 1회 활성화해야 합니다(버킷 생성 포함).
+- **R2:** Cloudflare 대시보드/배포 폼에서 R2를 **1회 활성화**해야 합니다(버킷 생성 포함). 활성화엔 **결제수단(카드) 등록이 필요**하지만, free tier(10GB·월 100만 Class A·1000만 Class B ops·**egress 0**)는 영구 무료라 이 앱 사용량에선 사실상 과금이 없습니다. **버튼·터미널 어느 방식이든 공통** 관문입니다.
 - **Cloudflare Images(선택):** 앵커 다운스케일에 쓰이며, 미활성이면 원본 전송으로 자동 폴백 — 기능 저하 없음.
 - **시크릿 안전:** `OPENAI_API_KEY`·`MCP_AUTH_TOKEN`·`OAUTH_PASSCODE`·`OAUTH_SIGNING_KEY`는 `wrangler secret` 으로만 등록되고 **코드·git에 절대 들어가지 않습니다.** (`OAUTH_SIGNING_KEY`는 선택 — 미설정 시 `MCP_AUTH_TOKEN`으로 폴백하지만, 별도 랜덤값 권장.) 유출 대응: `MCP_AUTH_TOKEN`을 회전(재등록+재배포)하면 기존 연결·서명 URL이 전부 무효화되는 kill-switch가 됩니다.
 - **갱신:** 코드를 고치면 `npm run deploy` 로 다시 배포(워커는 git push로 자동 반영되지 않습니다).
