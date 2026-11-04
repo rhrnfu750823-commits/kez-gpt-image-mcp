@@ -255,11 +255,11 @@ async function loadImageSource(env: Env, src: string): Promise<{ bytes: Uint8Arr
 
 /**
  * 단가표 (USD / 1M tokens). 변경 시 여기만 갱신 — openai.com/api/pricing 대조.
- * 미등록 모델은 gpt-image-1 단가로 폴백(보수적 추정).
+ * 미등록 모델은 gpt-image-2 단가로 폴백(보수적 추정).
  */
 const PRICING: Record<string, { textIn: number; imageIn: number; imageOut: number }> = {
-  'gpt-image-1': { textIn: 5, imageIn: 10, imageOut: 40 },
-  'gpt-image-1.5': { textIn: 5, imageIn: 8, imageOut: 32 },
+  'gpt-image-2.5-flare': { textIn: 5, imageIn: 8, imageOut: 30 },
+  'gpt-image-2.5-sunburst': { textIn: 5, imageIn: 8, imageOut: 30 },
   'gpt-image-2': { textIn: 5, imageIn: 8, imageOut: 32 },
 };
 
@@ -279,7 +279,7 @@ interface OpenAIImagesResponse {
 
 export function estimateCost(model: string, usage: OpenAIUsage | undefined): number | null {
   if (!usage) return null;
-  const rate = PRICING[model] ?? PRICING['gpt-image-1'];
+  const rate = PRICING[model] ?? PRICING['gpt-image-2'];
   const textIn = usage.input_tokens_details?.text_tokens ?? usage.input_tokens ?? 0;
   const imageIn = usage.input_tokens_details?.image_tokens ?? 0;
   const out = usage.output_tokens ?? 0;
@@ -366,8 +366,8 @@ const uploaderInput = z.object({
   slug: slugField.optional().describe('위젯에 미리 채울 이름 (선택)'),
 });
 
-/** 허용 모델 화이트리스트 — 기본은 gpt-image-2 (CJK/한글 렌더링 개선, generations·edits 모두 지원). */
-const ALLOWED_MODELS = ['gpt-image-2', 'gpt-image-1.5', 'gpt-image-1'] as const;
+/** 허용 모델 화이트리스트 — 기본은 gpt-image-2.5-flare (빠른 일상 생성). sunburst는 정밀 편집용. 모두 generations·edits 지원. */
+const ALLOWED_MODELS = ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-2'] as const;
 
 const generateInput = z.object({
   prompt: z.string().min(1).describe('장면 묘사. style의 화풍 기술문이 자동으로 앞에 결합된다'),
@@ -384,8 +384,8 @@ const generateInput = z.object({
   n: z.number().int().min(1).max(4).default(1).describe('생성 매수 (1~4)'),
   model: z
     .enum(ALLOWED_MODELS)
-    .default('gpt-image-2')
-    .describe('OpenAI 이미지 모델. 기본 gpt-image-2 (한글 텍스트 렌더링 개선). gpt-image-1.5/1도 허용'),
+    .default('gpt-image-2.5-flare')
+    .describe('OpenAI 이미지 모델. 기본 gpt-image-2.5-flare (빠른 일상 생성). 정밀 편집은 gpt-image-2.5-sunburst. gpt-image-2도 허용'),
   wait: z
     .boolean()
     .default(true)
@@ -1091,7 +1091,7 @@ async function prepareGeneration(env: Env, args: Record<string, unknown>) {
   // 모델 화이트리스트 — 스키마(enum)와 이중화. OpenAI 호출 전 거절 + 허용 목록 안내.
   if (args.model !== undefined && !ALLOWED_MODELS.includes(args.model as (typeof ALLOWED_MODELS)[number])) {
     throw new Error(
-      `거부: 지원하지 않는 model '${String(args.model)}' — 허용 목록: ${ALLOWED_MODELS.join(', ')}. 미지정 시 기본값 gpt-image-2가 사용된다.`,
+      `거부: 지원하지 않는 model '${String(args.model)}' — 허용 목록: ${ALLOWED_MODELS.join(', ')}. 미지정 시 기본값 gpt-image-2.5-flare가 사용된다.`,
     );
   }
 
@@ -1135,7 +1135,7 @@ async function runGeneration(
 ): Promise<{ result: Record<string, unknown>; imageBlocks: ContentBlock[] }> {
   const { a, charMeta, styleMeta } = await prepareGeneration(env, args);
 
-  // 참조 첨부 순서: 캐릭터 시트 먼저, 스타일 앵커 나중 (gpt-image-1.5는 앞 5장을 고충실도 보존).
+  // 참조 첨부 순서: 캐릭터 시트 먼저, 스타일 앵커 나중.
   const styleAnchors = styleMeta ? styleMeta.files.slice(0, 2) : [];
   const refKeys = [...(charMeta?.files ?? []), ...styleAnchors];
   const finalPrompt = assemblePrompt(a.prompt, charMeta, styleMeta, styleAnchors.length);
@@ -1150,8 +1150,6 @@ async function runGeneration(
     form.append('quality', a.quality);
     form.append('size', a.size);
     form.append('n', String(a.n));
-    // input_fidelity는 gpt-image-1.x 전용 — gpt-image-2는 미지원(400)이라 생략 (라이브 실측 2026-06-12)
-    if (a.model !== 'gpt-image-2') form.append('input_fidelity', 'high');
     form.append('output_format', 'webp');
     form.append('output_compression', '80');
     for (const key of refKeys) {

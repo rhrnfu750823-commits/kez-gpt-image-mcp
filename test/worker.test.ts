@@ -473,7 +473,7 @@ describe('generate_image', () => {
     const call = openaiCalls.at(-1)!;
     expect(call.url).toBe('https://api.openai.com/v1/images/edits');
     const form = call.init.body as FormData;
-    expect(form.get('model')).toBe('gpt-image-2'); // 기본 모델
+    expect(form.get('model')).toBe('gpt-image-2.5-flare'); // 기본 모델
     expect(form.get('quality')).toBe('medium');
     expect(form.get('size')).toBe('1024x1536');
     expect(form.get('n')).toBe('1');
@@ -490,21 +490,32 @@ describe('generate_image', () => {
       model: 'dall-e-9',
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('gpt-image-2, gpt-image-1.5, gpt-image-1');
+    expect(result.content[0].text).toContain('gpt-image-2.5-flare, gpt-image-2.5-sunburst, gpt-image-2');
     expect(openaiCalls.length).toBe(0);
   });
 
-  it('gpt-image-1.5 명시 → 여전히 동작', async () => {
+  it.each(['gpt-image-1.5', 'gpt-image-1'])('제거된 모델 %s 명시 → OpenAI 호출 전 거절', async (model) => {
     await registerTestStyle('webtoon-flat', 1);
     const result = await callTool(env, ORIGIN, 'generate_image', {
       prompt: 'x',
       style: 'webtoon-flat',
-      model: 'gpt-image-1.5',
+      model,
+    });
+    expect(result.isError).toBe(true);
+    expect(openaiCalls.length).toBe(0);
+  });
+
+  it.each(['gpt-image-2.5-sunburst', 'gpt-image-2'])('%s 명시 → 허용, input_fidelity 생략', async (model) => {
+    await registerTestStyle('webtoon-flat', 1);
+    const result = await callTool(env, ORIGIN, 'generate_image', {
+      prompt: 'x',
+      style: 'webtoon-flat',
+      model,
     });
     expect(result.isError).toBeUndefined();
     const form = openaiCalls.at(-1)!.init.body as FormData;
-    expect(form.get('model')).toBe('gpt-image-1.5');
-    expect(form.get('input_fidelity')).toBe('high'); // 1.x 계열만 input_fidelity 사용
+    expect(form.get('model')).toBe(model);
+    expect(form.get('input_fidelity')).toBeNull(); // 2.x 계열은 input_fidelity 미사용
   });
 
   it('gpt-image-2 신규 해상도(1088x1360)가 size 검증을 통과', async () => {
@@ -534,8 +545,8 @@ describe('generate_image', () => {
     const outputKeys = [...r2.store.keys()].filter((k) => k.startsWith('outputs/'));
     expect(outputKeys.length).toBeGreaterThanOrEqual(2);
     expect(sc.usage.input_tokens).toBe(100);
-    // 60 text×$5 + 40 image×$8 + 1000 out×$32 (gpt-image-2 단가) / 1M = 0.03262 → 4자리 반올림
-    expect(sc.estimated_cost_usd).toBe(0.0326);
+    // 60 text×$5 + 40 image×$8 + 1000 out×$30 (gpt-image-2.5-flare 단가) / 1M = 0.03062 → 4자리 반올림
+    expect(sc.estimated_cost_usd).toBe(0.0306);
   });
 
   it('character+style 지정 → edits multipart, 캐릭터 시트 먼저·앵커 나중', async () => {
@@ -550,8 +561,8 @@ describe('generate_image', () => {
     const call = openaiCalls.at(-1)!;
     expect(call.url).toBe('https://api.openai.com/v1/images/edits');
     const form = call.init.body as FormData;
-    expect(form.get('input_fidelity')).toBeNull(); // gpt-image-2는 input_fidelity 미지원
-    expect(form.get('model')).toBe('gpt-image-2'); // 기본 모델
+    expect(form.get('input_fidelity')).toBeNull(); // 2.x 계열은 input_fidelity 미사용
+    expect(form.get('model')).toBe('gpt-image-2.5-flare'); // 기본 모델
     const images = form.getAll('image[]') as File[];
     // 캐릭터 2장 먼저, 스타일 앵커는 3장 중 앞 2장만
     expect(images.map((f) => f.name)).toEqual(['01.png', '02.png', 'anchor-01.png', 'anchor-02.png']);
@@ -824,7 +835,7 @@ describe('generation metadata sidecar', () => {
     const meta = JSON.parse(new TextDecoder().decode(r2.store.get(sidecarKey)!.bytes));
     expect(meta.scene_prompt).toBe('카페 장면');
     expect(meta.combined_prompt).toContain('플랫한 셀 셰이딩 웹툰 스타일'); // style fixed_prompt 결합본
-    expect(meta.model).toBe('gpt-image-2');
+    expect(meta.model).toBe('gpt-image-2.5-flare');
     expect(meta.character).toEqual({ slug: 'kez-girl', anchor_urls: ['characters/kez-girl/01.png', 'characters/kez-girl/02.png'] });
     expect(meta.style.slug).toBe('webtoon-flat');
     expect(meta.style.anchor_urls[0]).not.toContain('?sig='); // R2 키 저장 — 조회 시점 서명
@@ -838,7 +849,7 @@ describe('generation metadata sidecar', () => {
     const result = await callTool(env, ORIGIN, 'generate_image', { prompt: '바다', style: 'webtoon-flat' });
     const sc = result.structuredContent as { metadata: { scene_prompt: string; estimated_cost_usd: number } };
     expect(sc.metadata.scene_prompt).toBe('바다');
-    expect(sc.metadata.estimated_cost_usd).toBe(0.0326);
+    expect(sc.metadata.estimated_cost_usd).toBe(0.0306); // gpt-image-2.5-flare 단가
   });
 
   it('generate_image 응답에 items[] — 위젯 자동 렌더용, 앵커는 서명 URL 사본', async () => {
@@ -1803,16 +1814,25 @@ describe('OAuth handshake (passcode gate + PKCE)', () => {
 
 describe('estimateCost', () => {
   it('usage 없음 → null', () => {
-    expect(estimateCost('gpt-image-1.5', undefined)).toBeNull();
+    expect(estimateCost('gpt-image-2.5-flare', undefined)).toBeNull();
   });
 
-  it('미등록 모델 → gpt-image-1 단가 폴백', () => {
+  it.each(['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst'])('%s 단가 (text 5 / image 8 / out 30 USD per 1M)', (model) => {
+    const cost = estimateCost(model, {
+      input_tokens: 150,
+      output_tokens: 1000,
+      input_tokens_details: { text_tokens: 100, image_tokens: 50 },
+    });
+    expect(cost).toBeCloseTo((100 * 5 + 50 * 8 + 1000 * 30) / 1_000_000, 6);
+  });
+
+  it('미등록 모델 → gpt-image-2 단가 폴백', () => {
     const cost = estimateCost('gpt-image-9', {
       input_tokens: 100,
       output_tokens: 1000,
       input_tokens_details: { text_tokens: 100, image_tokens: 0 },
     });
-    expect(cost).toBeCloseTo((100 * 5 + 1000 * 40) / 1_000_000, 6);
+    expect(cost).toBeCloseTo((100 * 5 + 1000 * 32) / 1_000_000, 6);
   });
 });
 
